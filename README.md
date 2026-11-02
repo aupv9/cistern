@@ -18,11 +18,12 @@ restore được kiểm chứng định kỳ.
 | Metrics: `/metrics` của daemon, Pushgateway, textfile; cảnh báo trong `deploy/k8s/prometheus-rules.yaml` | Xong |
 | Webhook Slack / Teams / Telegram / JSON | Xong |
 | Driver `postgres` | Xong, đã chạy e2e với PostgreSQL 16 |
+| Driver `mysql` (MySQL, MariaDB): dump nhất quán kèm routine, trigger, event | Xong, đã chạy e2e với MySQL 8.4 và MariaDB 11.4 |
 | CLI: `backup` `restore` `list` `verify` `prune` `check` `keygen` `daemon` | Xong |
 | Daemon: lập lịch `schedule` / `verify_schedule` (cron 5 trường, `@daily`, `@every`), job song song, bỏ lượt khi lần trước chưa xong, dừng êm khi SIGTERM | Xong |
 | Repository S3 / MinIO: SigV4, multipart, ghi có điều kiện, Object Lock, tự thử lại | Xong, đã chạy e2e với MinIO |
 | Hook pre/post | TODO |
-| 10 driver còn lại, IRSA | TODO |
+| 9 driver còn lại, IRSA | TODO |
 
 ## Bắt đầu
 
@@ -60,8 +61,8 @@ Khôi phục thủ công khi không còn Cistern:
 age -d -i identity.txt <snapshot>/artifacts/db/orders.dump.gz.age | gunzip | pg_restore -d orders
 ```
 
-End-to-end (Docker): `make e2e` chạy PostgreSQL + repository local và PostgreSQL + MinIO có Object Lock;
-`./scripts/e2e-local.sh postgres` hoặc `./scripts/e2e-local.sh s3` để chạy riêng.
+End-to-end (Docker): `make e2e` chạy PostgreSQL, MySQL, MariaDB với repository local và PostgreSQL với MinIO
+có Object Lock; `./scripts/e2e-local.sh postgres|s3|mysql|mariadb` để chạy riêng.
 
 Repository S3 với Object Lock (tạo bucket, IAM tối thiểu, lifecycle): xem [deploy/s3/README.md](deploy/s3/README.md).
 

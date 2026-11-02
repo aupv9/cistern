@@ -62,6 +62,15 @@ jobs:
     hooks:
       post_restore: ./scripts/check-orders.sh
 
+  - name: shop-db
+    driver: mysql                   # MySQL hoặc MariaDB; mật khẩu đi qua file option tạm 0600
+    schedule: "30 2 * * *"
+    params:
+      host: ${MYSQL_HOST:-mysql}
+      user: backup
+      password: ${MYSQL_PASSWORD}
+      databases: [shop]
+
   - name: cache
     driver: redis
     schedule: "@every 6h"

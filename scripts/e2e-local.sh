@@ -3,12 +3,17 @@
 #   ./scripts/e2e-local.sh              # tất cả
 #   ./scripts/e2e-local.sh postgres     # PostgreSQL + repository local
 #   ./scripts/e2e-local.sh s3           # PostgreSQL + repository S3 (MinIO) có Object Lock
-# Biến môi trường: PG_IMAGE, MINIO_IMAGE, AWS_CLI_IMAGE, SKIP_DR=1 (bỏ bước cài age để khôi phục thủ công).
+#   ./scripts/e2e-local.sh mysql        # MySQL + repository local
+#   ./scripts/e2e-local.sh mariadb      # MariaDB + repository local
+# Biến môi trường: PG_IMAGE, MYSQL_IMAGE, MARIADB_IMAGE, MINIO_IMAGE, AWS_CLI_IMAGE,
+# SKIP_DR=1 (bỏ bước cài age để khôi phục thủ công).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TARGETS=${*:-postgres s3}
+TARGETS=${*:-postgres s3 mysql mariadb}
 PG_IMAGE=${PG_IMAGE:-postgres:16}
+MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4}
+MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4}
 # Docker Hub không còn image minio/minio; dùng bản dựng của Chainguard.
 MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
 AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:latest}
@@ -18,7 +23,7 @@ ID=cistern-e2e-$$
 WORK=$(mktemp -d)
 
 cleanup() {
-  docker rm -f "$ID-pg" "$ID-minio" >/dev/null 2>&1 || true
+  docker rm -f "$ID-pg" "$ID-minio" "$ID-mysql" >/dev/null 2>&1 || true
   docker network rm "$ID" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
@@ -67,6 +72,20 @@ start_minio() {
   done
   docker logs "$ID-minio"
   fail "minio did not start"
+}
+
+# start_mysql IMAGE CLI: MySQL hoặc MariaDB, cistern chạy bên trong container.
+start_mysql() {
+  docker rm -f "$ID-mysql" >/dev/null 2>&1 || true
+  step "start $1"
+  docker run -d --name "$ID-mysql" --network "$ID" -e MYSQL_ROOT_PASSWORD=e2e-secret -e MARIADB_ROOT_PASSWORD=e2e-secret "$1" >/dev/null
+  for _ in $(seq 1 90); do
+    # TCP 127.0.0.1: server tạm của bước init chỉ nghe socket
+    docker exec -e MYSQL_PWD=e2e-secret "$ID-mysql" "$2" -h127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec -i "$ID-mysql" sh -c 'cat > /usr/local/bin/cistern && chmod +x /usr/local/bin/cistern' < "$WORK/cistern"
+  docker exec -i -e CLI="$2" "$ID-mysql" bash -s < "$ROOT/scripts/e2e/mysql.sh"
 }
 
 run_s3() {
@@ -128,6 +147,8 @@ for t in $TARGETS; do
   case $t in
     postgres) start_pg; inner postgres.sh ;;
     s3) run_s3 ;;
-    *) fail "unknown target $t (postgres | s3)" ;;
+    mysql) start_mysql "$MYSQL_IMAGE" mysql ;;
+    mariadb) start_mysql "$MARIADB_IMAGE" mariadb ;;
+    *) fail "unknown target $t (postgres | s3 | mysql | mariadb)" ;;
   esac
 done

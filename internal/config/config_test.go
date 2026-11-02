@@ -182,7 +182,7 @@ func TestLoadRecipientsAndExample(t *testing.T) {
 	// File ví dụ trong repo phải nạp được.
 	for k, v := range map[string]string{
 		"CISTERN_RECIPIENT": id.Recipient().String(), "S3_ACCESS_KEY_ID": "a", "S3_SECRET_ACCESS_KEY": "b",
-		"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x", "PGHOST": "db", "PGPASSWORD": "pw",
+		"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x", "PGHOST": "db", "PGPASSWORD": "pw", "MYSQL_PASSWORD": "pw",
 	} {
 		t.Setenv(k, v)
 	}

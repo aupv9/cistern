@@ -21,6 +21,16 @@
   bù lượt đã lỡ. SIGTERM: dừng HTTP, chờ job đang chạy trong `--grace` (mặc định 5 phút) rồi hủy.
   `/status` có lịch kế tiếp, đang chạy, lần chạy và lỗi gần nhất, số lượt bị bỏ qua. Biểu thức cron sai
   bị từ chối khi nạp cấu hình.
+- FR-04 — Driver `mysql` cho MySQL và MariaDB: `mysqldump`/`mariadb-dump` với `--single-transaction`,
+  routine, trigger, event (`events: false` để bỏ), `--hex-blob`; tự chọn bộ công cụ (`client: auto`).
+  Mật khẩu ghi vào file option tạm 0600 (`--defaults-extra-file`) trong thư mục 0700 của `CISTERN_TMPDIR`,
+  xóa ngay sau khi dùng. Dump không chứa `CREATE DATABASE`/`USE` nên restore sang tên khác được
+  (`restore_suffix`); dòng đầu `ALTER DATABASE` giữ character set và collation gốc. Restore từ chối ghi
+  vào database có sẵn trừ khi `clean=true`; xóa database dở do chính nó tạo khi lỗi. Chặn client cũ hơn
+  server cùng họ; tự thêm `--column-statistics=0` khi dùng client MySQL 8 với server MariaDB;
+  `gtid_purged` cho client MySQL.
+- e2e `mysql` và `mariadb`: 100 nghìn dòng utf8mb4 + BLOB, view, function, procedure, trigger, event,
+  collation khác mặc định; khôi phục thủ công bằng `age | gunzip | mariadb`.
 
 ## v0.1 — 2026-11-02 · Phase 1 (Lab)
 
