@@ -39,6 +39,8 @@ type Version struct {
 	ID           string
 	Data         []byte
 	ETag         string
+	ContentType  string
+	Modified     time.Time
 	DeleteMarker bool
 	LockMode     string
 	RetainUntil  time.Time
@@ -46,6 +48,7 @@ type Version struct {
 
 type upload struct {
 	key         string
+	contentType string
 	parts       map[int][]byte
 	lockMode    string
 	retainUntil time.Time
@@ -66,6 +69,8 @@ type Server struct {
 	MaxKeys    int
 	// CompleteError: CompleteMultipartUpload trả 200 kèm <Error> trong thân.
 	CompleteError bool
+	// BeforeGet được gọi (không giữ khóa) trước khi phục vụ GET object, vd. để sửa object giữa chừng.
+	BeforeGet func(key string)
 
 	mu       sync.Mutex
 	objects  map[string][]*Version
@@ -185,6 +190,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.BeforeGet != nil && r.Method == http.MethodGet && !r.URL.Query().Has("list-type") && !r.URL.Query().Has("object-lock") {
+		_, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if key != "" {
+			s.BeforeGet(key)
+		}
+	}
+	// Như S3: PUT phải có Content-Length (không nhận chunked transfer encoding).
+	if r.Method == http.MethodPut && r.ContentLength < 0 {
+		writeError(w, http.StatusLengthRequired, "MissingContentLength", "You must provide the Content-Length HTTP header.")
+		return
+	}
 	if f := s.takeFault(r); f != nil {
 		if f.AfterProcessing {
 			s.handle(httptest.NewRecorder(), r, body)
@@ -253,6 +269,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		sum := md5.Sum(body)
 		v := s.put(key, append([]byte(nil), body...), `"`+hex.EncodeToString(sum[:])+`"`, mode, until)
+		v.ContentType = r.Header.Get("Content-Type")
 		w.Header().Set("ETag", v.ETag)
 	case r.Method == http.MethodPost && q.Has("uploads"):
 		mode, until, ok := s.lockHeaders(w, r)
@@ -261,7 +278,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.seq++
 		id := fmt.Sprintf("upload-%d", s.seq)
-		s.uploads[id] = &upload{key: key, parts: map[int][]byte{}, lockMode: mode, retainUntil: until}
+		s.uploads[id] = &upload{key: key, parts: map[int][]byte{}, lockMode: mode, retainUntil: until, contentType: r.Header.Get("Content-Type")}
 		writeXML(w, struct {
 			XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
 			Bucket   string
@@ -283,7 +300,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NoSuchKey", "no such key")
 			return
 		}
+		if m := r.Header.Get("If-Match"); m != "" && m != v.ETag {
+			writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", "ETag does not match")
+			return
+		}
 		w.Header().Set("ETag", v.ETag)
+		if v.ContentType != "" {
+			w.Header().Set("Content-Type", v.ContentType)
+		}
 		w.Write(v.Data)
 	case r.Method == http.MethodDelete:
 		if vid := q.Get("versionId"); vid != "" {
@@ -330,7 +354,7 @@ func (s *Server) lockHeaders(w http.ResponseWriter, r *http.Request) (string, ti
 
 func (s *Server) put(key string, data []byte, etag, mode string, until time.Time) *Version {
 	s.seq++
-	v := &Version{ID: fmt.Sprintf("v%d", s.seq), Data: data, ETag: etag, LockMode: mode, RetainUntil: until}
+	v := &Version{ID: fmt.Sprintf("v%d", s.seq), Data: data, ETag: etag, LockMode: mode, RetainUntil: until, Modified: time.Now().UTC()}
 	if s.ObjectLock {
 		s.objects[key] = append(s.objects[key], v)
 	} else {
@@ -402,6 +426,7 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, key, id string
 	}
 	sum := md5.Sum(md5s)
 	v := s.put(key, data, fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(sum[:]), len(cb.Parts)), u.lockMode, u.retainUntil)
+	v.ContentType = u.contentType
 	delete(s.uploads, id)
 	writeXML(w, struct {
 		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
@@ -430,9 +455,10 @@ func (s *Server) list(w http.ResponseWriter, q map[string][]string) {
 	}
 	sort.Strings(keys)
 	type content struct {
-		Key  string
-		Size int
-		ETag string
+		Key          string
+		LastModified string
+		ETag         string
+		Size         int
 	}
 	res := struct {
 		XMLName               xml.Name `xml:"ListBucketResult"`
@@ -451,7 +477,7 @@ func (s *Server) list(w http.ResponseWriter, q map[string][]string) {
 	}
 	for _, k := range keys {
 		v, _ := s.current(k)
-		res.Contents = append(res.Contents, content{Key: k, Size: len(v.Data), ETag: v.ETag})
+		res.Contents = append(res.Contents, content{Key: k, Size: len(v.Data), ETag: v.ETag, LastModified: v.Modified.Format("2006-01-02T15:04:05.000Z")})
 	}
 	res.KeyCount = len(res.Contents)
 	writeXML(w, res)

@@ -240,3 +240,41 @@ func TestBadCredentialsNotRetried(t *testing.T) {
 		t.Fatalf("err=%v requests=%d", err, len(srv.Requests()))
 	}
 }
+
+func TestListInfoIfMatchContentType(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newClient(t, false)
+	if err := c.PutObject(ctx, "img/a.jpg", []byte("jpeg"), s3.PutOptions{ContentType: "image/jpeg"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Upload(ctx, "big.bin", bytes.NewReader(random(s3.MinPartSize+1)), s3.PutOptions{ContentType: "application/x-big"}); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := c.ListObjectsInfo(ctx, "")
+	if err != nil || len(infos) != 2 {
+		t.Fatalf("list: %v %v", infos, err)
+	}
+	a := infos[1]
+	if a.Key != "img/a.jpg" || a.Size != 4 || a.ETag == "" || a.LastModified.IsZero() {
+		t.Fatalf("info: %+v", a)
+	}
+	rc, meta, err := c.GetObjectWith(ctx, "img/a.jpg", s3.GetOptions{IfMatch: a.ETag})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	if meta.ContentType != "image/jpeg" || meta.ETag != a.ETag || meta.Size != 4 {
+		t.Fatalf("meta: %+v", meta)
+	}
+	rc, meta, err = c.GetObjectWith(ctx, "big.bin", s3.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	if meta.ContentType != "application/x-big" {
+		t.Fatalf("multipart content type: %+v", meta)
+	}
+	if _, _, err := c.GetObjectWith(ctx, "img/a.jpg", s3.GetOptions{IfMatch: `"stale"`}); !errors.Is(err, s3.ErrPreconditionFailed) {
+		t.Fatalf("stale If-Match: %v", err)
+	}
+}

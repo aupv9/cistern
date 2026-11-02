@@ -29,6 +29,19 @@
   vào database có sẵn trừ khi `clean=true`; xóa database dở do chính nó tạo khi lỗi. Chặn client cũ hơn
   server cùng họ; tự thêm `--column-statistics=0` khi dùng client MySQL 8 với server MariaDB;
   `gtid_purged` cho client MySQL.
+- FR-12 — Driver `s3`: sao chép object của một bucket/prefix S3-compatible, mỗi object một artifact
+  (`objects/<sha256(key)>`) cùng `index.json` (key, ETag, kích thước, Content-Type, snapshot giữ dữ liệu).
+  Lần sau chỉ sao chép object có ETag hoặc kích thước đổi; object không đổi trỏ thẳng tới snapshot đang giữ
+  dữ liệu của nó và snapshot đó vào `depends_on`, nên retention giữ đúng chuỗi phụ thuộc. Đọc index lần trước
+  cần `identity_file`; không có thì sao chép đầy đủ (`full: true` để ép). `GET` kèm `If-Match` nên object bị
+  sửa giữa chừng báo lỗi rõ ràng. Restore sang `restore_bucket` / `restore_prefix`, lọc bằng `only`, từ chối
+  ghi đè trừ khi `overwrite=true`; giữ Content-Type (không giữ metadata khác, tag, ACL).
+- Engine: `Sink.Previous()` trả snapshot hoàn tất gần nhất; source cho driver đọc các snapshot trong
+  `depends_on`.
+- Sửa: PUT object rỗng gửi chunked thay vì `Content-Length: 0`, bị S3/MinIO từ chối (411). Server giả
+  giờ từ chối PUT không có Content-Length như S3.
+- e2e `s3-driver`: MinIO, file 12 MB multipart, key tiếng Việt có dấu cách, object rỗng; so SHA-256 từng
+  object sau restore, restore bản cũ, prune giữ snapshot phụ thuộc, repository S3 có Object Lock.
 - e2e `mysql` và `mariadb`: 100 nghìn dòng utf8mb4 + BLOB, view, function, procedure, trigger, event,
   collation khác mặc định; khôi phục thủ công bằng `age | gunzip | mariadb`.
 

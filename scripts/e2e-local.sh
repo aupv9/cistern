@@ -5,12 +5,13 @@
 #   ./scripts/e2e-local.sh s3           # PostgreSQL + repository S3 (MinIO) có Object Lock
 #   ./scripts/e2e-local.sh mysql        # MySQL + repository local
 #   ./scripts/e2e-local.sh mariadb      # MariaDB + repository local
+#   ./scripts/e2e-local.sh s3-driver    # driver s3 (MinIO, incremental) + repository S3 có Object Lock
 # Biến môi trường: PG_IMAGE, MYSQL_IMAGE, MARIADB_IMAGE, MINIO_IMAGE, AWS_CLI_IMAGE,
 # SKIP_DR=1 (bỏ bước cài age để khôi phục thủ công).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TARGETS=${*:-postgres s3 mysql mariadb}
+TARGETS=${*:-postgres s3 mysql mariadb s3-driver}
 PG_IMAGE=${PG_IMAGE:-postgres:16}
 MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4}
 MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4}
@@ -23,7 +24,7 @@ ID=cistern-e2e-$$
 WORK=$(mktemp -d)
 
 cleanup() {
-  docker rm -f "$ID-pg" "$ID-minio" "$ID-mysql" >/dev/null 2>&1 || true
+  docker rm -f -v "$ID-pg" "$ID-minio" "$ID-mysql" "$ID-tools" >/dev/null 2>&1 || true
   docker network rm "$ID" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
@@ -37,7 +38,7 @@ step "build cistern linux/$ARCH"
 docker network create "$ID" >/dev/null
 
 start_pg() {
-  docker rm -f "$ID-pg" >/dev/null 2>&1 || true
+  docker rm -f -v "$ID-pg" >/dev/null 2>&1 || true
   step "start $PG_IMAGE"
   docker run -d --name "$ID-pg" --network "$ID" -e POSTGRES_PASSWORD=e2e-secret "$PG_IMAGE" >/dev/null
   for _ in $(seq 1 60); do
@@ -61,13 +62,15 @@ aws() {
     -e AWS_DEFAULT_REGION=us-east-1 -e AWS_PAGER= "$AWS_CLI_IMAGE" --endpoint-url http://minio:9000 "$@"
 }
 
+# start_minio PROBE_CONTAINER: chờ MinIO nghe cổng 9000, kiểm từ container có bash.
 start_minio() {
+  docker rm -f -v "$ID-minio" >/dev/null 2>&1 || true
   step "start $MINIO_IMAGE"
   docker run -d --name "$ID-minio" --network "$ID" --network-alias minio \
     -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASS" \
     --tmpfs /data:rw,mode=1777 "$MINIO_IMAGE" server /data >/dev/null
   for _ in $(seq 1 60); do
-    docker exec "$ID-pg" bash -c 'exec 3<>/dev/tcp/minio/9000' 2>/dev/null && return
+    docker exec "$1" bash -c 'exec 3<>/dev/tcp/minio/9000' 2>/dev/null && return
     sleep 1
   done
   docker logs "$ID-minio"
@@ -76,7 +79,7 @@ start_minio() {
 
 # start_mysql IMAGE CLI: MySQL hoặc MariaDB, cistern chạy bên trong container.
 start_mysql() {
-  docker rm -f "$ID-mysql" >/dev/null 2>&1 || true
+  docker rm -f -v "$ID-mysql" >/dev/null 2>&1 || true
   step "start $1"
   docker run -d --name "$ID-mysql" --network "$ID" -e MYSQL_ROOT_PASSWORD=e2e-secret -e MARIADB_ROOT_PASSWORD=e2e-secret "$1" >/dev/null
   for _ in $(seq 1 90); do
@@ -90,7 +93,7 @@ start_mysql() {
 
 run_s3() {
   start_pg
-  start_minio
+  start_minio "$ID-pg"
   step "create bucket with Object Lock (aws cli)"
   aws s3api create-bucket --bucket backups --object-lock-enabled-for-bucket >/dev/null
   aws s3api get-object-lock-configuration --bucket backups --output text
@@ -143,12 +146,23 @@ run_s3() {
   echo; echo "E2E S3 + OBJECT LOCK: PASS"
 }
 
+run_s3_driver() {
+  docker rm -f -v "$ID-tools" >/dev/null 2>&1 || true
+  step "start tools container ($AWS_CLI_IMAGE + cistern)"
+  docker run -d --name "$ID-tools" --network "$ID" -e AWS_ACCESS_KEY_ID="$MINIO_USER" -e AWS_SECRET_ACCESS_KEY="$MINIO_PASS" \
+    --entrypoint sleep "$AWS_CLI_IMAGE" infinity >/dev/null
+  docker exec -i "$ID-tools" sh -c 'cat > /usr/local/bin/cistern && chmod +x /usr/local/bin/cistern' < "$WORK/cistern"
+  start_minio "$ID-tools"
+  docker exec -i "$ID-tools" bash -s < "$ROOT/scripts/e2e/s3-driver.sh"
+}
+
 for t in $TARGETS; do
   case $t in
     postgres) start_pg; inner postgres.sh ;;
     s3) run_s3 ;;
     mysql) start_mysql "$MYSQL_IMAGE" mysql ;;
     mariadb) start_mysql "$MARIADB_IMAGE" mariadb ;;
-    *) fail "unknown target $t (postgres | s3 | mysql | mariadb)" ;;
+    s3-driver) run_s3_driver ;;
+    *) fail "unknown target $t (postgres | s3 | mysql | mariadb | s3-driver)" ;;
   esac
 done

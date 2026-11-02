@@ -236,11 +236,16 @@ func (c *Client) do(ctx context.Context, rq request) (*http.Response, error) {
 			return nil, err
 		}
 		req.URL = u
-		if rq.body != nil {
+		switch {
+		case len(rq.body) > 0:
 			body := rq.body
 			req.Body = io.NopCloser(bytes.NewReader(body))
 			req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 			req.ContentLength = int64(len(body))
+		case rq.body != nil:
+			// Body rỗng phải là http.NoBody: reader rỗng khiến Go gửi chunked, S3 trả 411.
+			req.Body = http.NoBody
+			req.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
 		}
 		for k, vs := range rq.header {
 			req.Header[k] = vs
@@ -286,6 +291,14 @@ type Retention struct {
 type PutOptions struct {
 	IfNoneMatch bool       // chỉ ghi khi key chưa tồn tại (412 nếu đã có)
 	Retention   *Retention // Object Lock cho object này
+	ContentType string     // mặc định application/octet-stream
+}
+
+func (o PutOptions) contentType() string {
+	if o.ContentType != "" {
+		return o.ContentType
+	}
+	return "application/octet-stream"
 }
 
 func (o PutOptions) apply(h http.Header, onComplete bool) {
@@ -304,7 +317,7 @@ func contentMD5(b []byte) string {
 
 func (c *Client) putOnce(ctx context.Context, key string, data []byte, o PutOptions, noRetry bool) error {
 	h := http.Header{}
-	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Content-Type", o.contentType())
 	h.Set("Content-Md5", contentMD5(data)) // bắt buộc khi có Object Lock; luôn gửi để S3 kiểm toàn vẹn
 	if o.IfNoneMatch {
 		h.Set("If-None-Match", "*")
@@ -424,7 +437,7 @@ type initiateResult struct {
 
 func (c *Client) createMultipart(ctx context.Context, key string, o PutOptions) (string, error) {
 	h := http.Header{}
-	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Content-Type", o.contentType())
 	o.apply(h, false)
 	resp, err := c.do(ctx, request{op: "CreateMultipartUpload", method: http.MethodPost, key: key, query: url.Values{"uploads": {""}}, header: h})
 	if err != nil {
@@ -502,28 +515,65 @@ func (c *Client) abortMultipart(ctx context.Context, key, uploadID string) error
 
 // GetObject trả về nội dung object; người gọi phải Close.
 func (c *Client) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
-	resp, err := c.do(ctx, request{op: "GetObject", method: http.MethodGet, key: key})
-	if err != nil {
-		return nil, err
+	rc, _, err := c.GetObjectWith(ctx, key, GetOptions{})
+	return rc, err
+}
+
+type GetOptions struct {
+	IfMatch string // ETag; object đã đổi thì trả ErrPreconditionFailed
+}
+
+type ObjectMeta struct {
+	ETag        string
+	Size        int64
+	ContentType string
+}
+
+func (c *Client) GetObjectWith(ctx context.Context, key string, o GetOptions) (io.ReadCloser, ObjectMeta, error) {
+	h := http.Header{}
+	if o.IfMatch != "" {
+		h.Set("If-Match", o.IfMatch)
 	}
-	return resp.Body, nil
+	resp, err := c.do(ctx, request{op: "GetObject", method: http.MethodGet, key: key, header: h})
+	if err != nil {
+		return nil, ObjectMeta{}, err
+	}
+	return resp.Body, ObjectMeta{ETag: resp.Header.Get("ETag"), Size: resp.ContentLength, ContentType: resp.Header.Get("Content-Type")}, nil
+}
+
+type ObjectInfo struct {
+	Key          string    `xml:"Key"`
+	ETag         string    `xml:"ETag"`
+	Size         int64     `xml:"Size"`
+	LastModified time.Time `xml:"LastModified"`
 }
 
 type listResult struct {
-	Contents []struct {
-		Key string `xml:"Key"`
-	} `xml:"Contents"`
-	IsTruncated           bool   `xml:"IsTruncated"`
-	NextContinuationToken string `xml:"NextContinuationToken"`
+	Contents              []ObjectInfo `xml:"Contents"`
+	IsTruncated           bool         `xml:"IsTruncated"`
+	NextContinuationToken string       `xml:"NextContinuationToken"`
 }
 
 // ListObjects trả về mọi key có tiền tố prefix (ListObjectsV2, tự phân trang).
 func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, error) {
+	infos, err := c.list(ctx, prefix, 0)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, len(infos))
+	for i, o := range infos {
+		keys[i] = o.Key
+	}
+	return keys, nil
+}
+
+// ListObjectsInfo như ListObjects nhưng kèm ETag, kích thước, thời điểm sửa.
+func (c *Client) ListObjectsInfo(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	return c.list(ctx, prefix, 0)
 }
 
-func (c *Client) list(ctx context.Context, prefix string, limit int) ([]string, error) {
-	var keys []string
+func (c *Client) list(ctx context.Context, prefix string, limit int) ([]ObjectInfo, error) {
+	var keys []ObjectInfo
 	token := ""
 	for {
 		q := url.Values{"list-type": {"2"}, "prefix": {prefix}}
@@ -543,9 +593,7 @@ func (c *Client) list(ctx context.Context, prefix string, limit int) ([]string, 
 		if err != nil {
 			return nil, fmt.Errorf("s3 ListObjectsV2: bad response: %w", err)
 		}
-		for _, o := range res.Contents {
-			keys = append(keys, o.Key)
-		}
+		keys = append(keys, res.Contents...)
 		if !res.IsTruncated || limit > 0 {
 			return keys, nil
 		}

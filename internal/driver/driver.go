@@ -33,6 +33,17 @@ type Source interface {
 	Open(name string) (io.ReadCloser, error)
 }
 
+// Snapshotted: Source biết ID snapshot của nó (engine luôn cung cấp). Driver incremental dùng ID này
+// để trỏ tới dữ liệu đã có trong snapshot trước.
+type Snapshotted interface {
+	SnapshotID() string
+}
+
+// Resolver: Source mở được snapshot khác mà snapshot hiện tại phụ thuộc (Info.DependsOn).
+type Resolver interface {
+	Snapshot(id string) (Source, error)
+}
+
 // Aborter: reader có thể đóng ngay mà không đọc nốt để kiểm checksum (dùng khi đã lỗi).
 type Aborter interface{ Abort() }
 

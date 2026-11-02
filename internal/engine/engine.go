@@ -177,6 +177,10 @@ type sink struct {
 	names     map[string]bool
 	open      map[*artifactWriter]bool
 	artifacts []manifest.Artifact
+
+	previous func() driver.Source
+	prevOnce sync.Once
+	prev     driver.Source
 }
 
 type artifactWriter struct {
@@ -226,7 +230,40 @@ func (s *sink) Create(name string) (io.WriteCloser, error) {
 	return aw, nil
 }
 
-func (s *sink) Previous() driver.Source { return nil } // TODO: incremental
+// Previous trả về snapshot hoàn tất gần nhất của job (cho driver incremental), tính một lần.
+func (s *sink) Previous() driver.Source {
+	s.prevOnce.Do(func() {
+		if s.previous != nil {
+			s.prev = s.previous()
+		}
+	})
+	return s.prev
+}
+
+// previousSource: snapshot mới nhất cùng driver; nil nếu không có hoặc không đọc được
+// (snapshot mã hóa mà không có encryption.identity_file).
+func (e *Engine) previousSource(ctx context.Context, r repo.Repository, prefix string, job *config.Job) driver.Source {
+	list, err := e.list(ctx, r, prefix, job.Name)
+	if err != nil {
+		e.Log.Warn("incremental: listing snapshots failed; making a full copy", "job", job.Name, "err", err)
+		return nil
+	}
+	for i := len(list) - 1; i >= 0; i-- {
+		m := list[i]
+		if m.Driver != job.Driver {
+			continue
+		}
+		var ids []*crypt.Identity
+		if m.Encryption != pipeline.EncryptionNone {
+			if ids, err = e.identities(); err != nil || len(ids) == 0 {
+				e.Log.Warn("incremental: reading the previous snapshot needs encryption.identity_file; making a full copy", "job", job.Name, "previous", m.ID)
+				return nil
+			}
+		}
+		return &source{ctx: ctx, e: e, repo: r, prefix: prefix, m: m, ids: ids}
+	}
+	return nil
+}
 
 func (a *artifactWriter) Write(p []byte) (int, error) { return a.pl.Write(p) }
 
@@ -326,7 +363,8 @@ func (e *Engine) backup(ctx context.Context, job *config.Job) (*manifest.Manifes
 	defer cancel()
 	opts := e.pipelineOptions()
 	s := &sink{ctx: bctx, repo: r, prefix: prefix, job: job.Name, snap: snap, opts: opts,
-		names: map[string]bool{}, open: map[*artifactWriter]bool{}}
+		names: map[string]bool{}, open: map[*artifactWriter]bool{},
+		previous: func() driver.Source { return e.previousSource(bctx, r, prefix, job) }}
 
 	info, err := drv.Backup(bctx, s)
 	if err == nil {
@@ -613,10 +651,38 @@ func resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) 
 
 type source struct {
 	ctx    context.Context
+	e      *Engine
 	repo   repo.Repository
 	prefix string
 	m      *manifest.Manifest
 	ids    []*crypt.Identity
+}
+
+func (s *source) SnapshotID() string { return s.m.ID }
+
+// Snapshot mở một snapshot nằm trong depends_on của snapshot này (dữ liệu incremental).
+func (s *source) Snapshot(id string) (driver.Source, error) {
+	if id == s.m.ID {
+		return s, nil
+	}
+	allowed := false
+	for _, d := range s.m.DependsOn {
+		allowed = allowed || d == id
+	}
+	if !allowed {
+		return nil, fmt.Errorf("snapshot %s is not in depends_on of %s", id, s.m.ID)
+	}
+	dep, err := readManifest(s.ctx, s.repo, manifest.ManifestKey(s.prefix, s.m.Job, id))
+	if err != nil {
+		return nil, fmt.Errorf("dependency snapshot %s: %w", id, err)
+	}
+	ids := s.ids
+	if dep.Encryption != pipeline.EncryptionNone && len(ids) == 0 && s.e != nil {
+		if ids, err = s.e.identities(); err != nil {
+			return nil, err
+		}
+	}
+	return &source{ctx: s.ctx, e: s.e, repo: s.repo, prefix: s.prefix, m: dep, ids: ids}, nil
 }
 
 func (s *source) List() []string {
@@ -750,7 +816,7 @@ func (e *Engine) restore(ctx context.Context, job *config.Job, ref string, overr
 	log.Info("restore started")
 	rctx, cancel := context.WithTimeout(ctx, job.Timeout)
 	defer cancel()
-	if err := drv.Restore(rctx, &source{ctx: rctx, repo: r, prefix: prefix, m: m, ids: ids}); err != nil {
+	if err := drv.Restore(rctx, &source{ctx: rctx, e: e, repo: r, prefix: prefix, m: m, ids: ids}); err != nil {
 		log.Error("restore failed", "err", err)
 		return m, fmt.Errorf("restore %s from %s: %w", job.Name, m.ID, err)
 	}
