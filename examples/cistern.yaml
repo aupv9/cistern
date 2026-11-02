@@ -7,11 +7,15 @@ repositories:
     type: s3
     endpoint: https://s3.ap-southeast-1.amazonaws.com
     bucket: company-backups
+    region: ap-southeast-1
+    prefix: cistern
+    # Bỏ trống để lấy AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
     access_key_id: ${S3_ACCESS_KEY_ID}
     secret_access_key: ${S3_SECRET_ACCESS_KEY}
     path_style: false
     part_size_mb: 16
-    object_lock: { mode: COMPLIANCE, days: 30 }
+    # Bucket phải tạo kèm Object Lock; xem deploy/s3/README.md. days ≤ retention ngắn nhất.
+    object_lock: { mode: COMPLIANCE, days: 7 }
 
 encryption:
   # Public key tạo bằng `cistern keygen --out identity.txt` hoặc `age-keygen`.

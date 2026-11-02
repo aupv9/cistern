@@ -86,8 +86,23 @@ func (e *Engine) repoFor(job *config.Job) (repo.Repository, string, error) {
 			return nil, "", fmt.Errorf("repository %s: %w", job.Repository, err)
 		}
 		r = l
+	case "s3":
+		cfg := repo.S3Config{
+			Endpoint: rc.Endpoint, Region: rc.Region, Bucket: rc.Bucket, PathStyle: rc.PathStyle,
+			AccessKeyID: rc.AccessKeyID, SecretAccessKey: rc.SecretAccessKey, SessionToken: rc.SessionToken,
+			PartSizeMB: rc.PartSizeMB, CAFile: e.Cfg.Resolve(rc.CAFile), InsecureSkipVerify: rc.InsecureSkip,
+			Log: e.Log.With("repository", job.Repository),
+		}
+		if rc.ObjectLock != nil {
+			cfg.LockMode, cfg.LockDays = rc.ObjectLock.Mode, rc.ObjectLock.Days
+		}
+		s, err := repo.NewS3(cfg)
+		if err != nil {
+			return nil, "", fmt.Errorf("repository %s: %w", job.Repository, err)
+		}
+		r = s
 	default:
-		return nil, "", fmt.Errorf("repository %s: type %q is not implemented yet", job.Repository, rc.Type)
+		return nil, "", fmt.Errorf("repository %s: unknown type %q", job.Repository, rc.Type)
 	}
 	e.repos[job.Repository] = r
 	return r, rc.Prefix, nil
@@ -881,6 +896,11 @@ func (e *Engine) Check(ctx context.Context, jobName string) error {
 	r, prefix, err := e.repoFor(job)
 	if err != nil {
 		return err
+	}
+	if c, ok := r.(repo.Checker); ok {
+		if err := c.Check(ctx); err != nil {
+			return fmt.Errorf("repository %s: %w", job.Repository, err)
+		}
 	}
 	if _, err := r.List(ctx, path.Join(prefix, job.Name)+"/"); err != nil {
 		return fmt.Errorf("repository %s: %w", job.Repository, err)

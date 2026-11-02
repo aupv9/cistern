@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +52,13 @@ func (f *fakeDriver) Backup(ctx context.Context, s driver.Sink) (driver.Info, er
 			<-blockCh
 		}
 		data := bytes.Repeat([]byte(name+":"), 50000) // ~ vài trăm KiB, nhiều khối age
+		if name == f.p["big"] {
+			// Dữ liệu ngẫu nhiên không nén được, để bản lưu vượt một part S3.
+			n, _ := strconv.Atoi(f.p["big_size"])
+			noise := make([]byte, n)
+			rand.Read(noise)
+			data = append(data, noise...)
+		}
 		if _, err := w.Write(data); err != nil {
 			return driver.Info{}, err
 		}

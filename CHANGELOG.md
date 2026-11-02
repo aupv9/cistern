@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Tính năng
+- FR-15, NFR-04 — Repository S3-compatible (AWS S3, MinIO): client tự viết, chữ ký SigV4 (kiểm bằng
+  test vector của AWS), PutObject hoặc multipart (bộ nhớ tối đa một part, mặc định 16 MiB, tối thiểu 5),
+  ListObjectsV2 phân trang, ghi khóa job bằng `If-None-Match: *`.
+- Object Lock: artifact và manifest ghi kèm `object_lock: { mode, days }` (GOVERNANCE/COMPLIANCE) và
+  `Content-MD5`; file khóa job không bị khóa. `cistern check` báo lỗi nếu bucket chưa bật Object Lock.
+- Prune trên bucket có Object Lock tạo delete marker; bản đã khóa còn nguyên tới hết hạn.
+- Tự thử lại khi lỗi mạng, 5xx, 429 (backoff); ghi khóa job có điều kiện xử lý đúng trường hợp mất
+  phản hồi. Upload dở bị hủy (AbortMultipartUpload) khi driver lỗi; phát hiện S3 trả 200 kèm `<Error>`.
+- TLS 1.2+, `ca_file`, `insecure_skip_verify`; `session_token`; credential từ biến `AWS_*`.
+- `deploy/s3/`: policy IAM tối thiểu cho backup và prune, lifecycle rule, hướng dẫn tạo bucket.
+- e2e `./scripts/e2e-local.sh s3`: MinIO thật, kiểm bằng AWS CLI.
+
 ## v0.1 — 2026-11-02 · Phase 1 (Lab)
 
 Bản đầu tiên chạy được đầu-cuối: backup PostgreSQL vào repository local, mã hóa bằng age, kiểm chứng,

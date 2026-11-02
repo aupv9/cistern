@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "cistern-cleanup",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "PREFIX/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "Expiration": { "ExpiredObjectDeleteMarker": true },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}

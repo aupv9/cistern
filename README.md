@@ -19,8 +19,9 @@ restore được kiểm chứng định kỳ.
 | Webhook Slack / Teams / Telegram / JSON | Xong |
 | Driver `postgres` | Xong, đã chạy e2e với PostgreSQL 16 |
 | CLI: `backup` `restore` `list` `verify` `prune` `check` `keygen` `daemon` | Xong (daemon chưa lập lịch) |
+| Repository S3 / MinIO: SigV4, multipart, ghi có điều kiện, Object Lock, tự thử lại | Xong, đã chạy e2e với MinIO |
 | Hook pre/post, scheduler của daemon | TODO |
-| Repository S3, 10 driver còn lại | TODO |
+| 10 driver còn lại, IRSA | TODO |
 
 ## Bắt đầu
 
@@ -58,7 +59,10 @@ Khôi phục thủ công khi không còn Cistern:
 age -d -i identity.txt <snapshot>/artifacts/db/orders.dump.gz.age | gunzip | pg_restore -d orders
 ```
 
-End-to-end với PostgreSQL thật (Docker): `make e2e`.
+End-to-end (Docker): `make e2e` chạy PostgreSQL + repository local và PostgreSQL + MinIO có Object Lock;
+`./scripts/e2e-local.sh postgres` hoặc `./scripts/e2e-local.sh s3` để chạy riêng.
+
+Repository S3 với Object Lock (tạo bucket, IAM tối thiểu, lifecycle): xem [deploy/s3/README.md](deploy/s3/README.md).
 
 Yêu cầu: Go ≥ 1.24, chỉ dùng thư viện chuẩn (ChaCha20-Poly1305 sao chép từ x/crypto vào
 `internal/thirdparty/xcrypto`). Driver `postgres` cần `pg_dump`, `pg_dumpall`, `pg_restore`, `psql`

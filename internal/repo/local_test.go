@@ -21,19 +21,16 @@ func (f *failingReader) Read(p []byte) (int, error) {
 	return copy(p, "data"), nil
 }
 
-func TestLocal(t *testing.T) {
+// testContract kiểm hành vi chung mà engine dựa vào, cho mọi hiện thực Repository.
+func testContract(t *testing.T, r Repository) {
 	ctx := context.Background()
-	l, err := NewLocal(t.TempDir())
-	if err != nil {
+	if err := r.Put(ctx, "job/s1/manifest.json", strings.NewReader("{}")); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Put(ctx, "job/s1/manifest.json", strings.NewReader("{}")); err != nil {
+	if err := r.Put(ctx, "job/s1/artifacts/db/a.dump.gz", strings.NewReader("aaa")); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Put(ctx, "job/s1/artifacts/db/a.dump.gz", strings.NewReader("aaa")); err != nil {
-		t.Fatal(err)
-	}
-	rc, err := l.Get(ctx, "job/s1/artifacts/db/a.dump.gz")
+	rc, err := r.Get(ctx, "job/s1/artifacts/db/a.dump.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,52 +40,60 @@ func TestLocal(t *testing.T) {
 		t.Fatalf("got %q", b)
 	}
 
-	// Put thất bại giữa chừng: không để lại key hay file tạm.
-	if err := l.Put(ctx, "job/s1/artifacts/bad", &failingReader{n: 3}); err == nil {
+	// Put thất bại giữa chừng: không để lại key.
+	if err := r.Put(ctx, "job/s1/artifacts/bad", &failingReader{n: 3}); err == nil {
 		t.Fatal("expected error")
 	}
-	keys, _ := l.List(ctx, "job/")
+	keys, _ := r.List(ctx, "job/")
 	if want := []string{"job/s1/artifacts/db/a.dump.gz", "job/s1/manifest.json"}; !reflect.DeepEqual(keys, want) {
 		t.Fatalf("List = %v", keys)
 	}
-	entries, _ := os.ReadDir(filepath.Join(l.Root, "job/s1/artifacts"))
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), tmpPrefix) {
-			t.Fatalf("temp file left: %s", e.Name())
-		}
-	}
-
-	if _, err := l.Get(ctx, "job/nope"); !errors.Is(err, ErrNotExist) {
+	if _, err := r.Get(ctx, "job/nope"); !errors.Is(err, ErrNotExist) {
 		t.Fatalf("Get missing: %v", err)
 	}
 
-	// PutIfAbsent.
-	if err := l.PutIfAbsent(ctx, "locks/job.lock", []byte("1")); err != nil {
+	if err := r.PutIfAbsent(ctx, "locks/job.lock", []byte("1")); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.PutIfAbsent(ctx, "locks/job.lock", []byte("2")); !errors.Is(err, ErrExist) {
+	if err := r.PutIfAbsent(ctx, "locks/job.lock", []byte("2")); !errors.Is(err, ErrExist) {
 		t.Fatalf("second PutIfAbsent: %v", err)
 	}
+	if err := r.Delete(ctx, "locks/job.lock"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PutIfAbsent(ctx, "locks/job.lock", []byte("3")); err != nil {
+		t.Fatalf("PutIfAbsent after delete: %v", err)
+	}
 
-	// Delete dọn thư mục rỗng.
 	for _, k := range []string{"job/s1/artifacts/db/a.dump.gz", "job/s1/manifest.json", "locks/job.lock"} {
-		if err := l.Delete(ctx, k); err != nil {
+		if err := r.Delete(ctx, k); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := l.Delete(ctx, "job/s1/manifest.json"); err != nil {
+	if err := r.Delete(ctx, "job/s1/manifest.json"); err != nil {
 		t.Fatalf("delete missing: %v", err)
 	}
-	if entries, _ := os.ReadDir(l.Root); len(entries) != 0 {
-		t.Fatalf("root not empty: %v", entries)
+	if keys, _ := r.List(ctx, ""); len(keys) != 0 {
+		t.Fatalf("keys left: %v", keys)
+	}
+	for _, k := range []string{"", "/abs", "../x", "a/../../x", "a//b", "a/", `a\b`} {
+		if err := r.Put(ctx, k, strings.NewReader("x")); err == nil {
+			t.Errorf("key %q accepted", k)
+		}
 	}
 }
 
-func TestLocalRejectsBadKeys(t *testing.T) {
-	l, _ := NewLocal(t.TempDir())
-	for _, k := range []string{"", "/abs", "../x", "a/../../x", "a//b", "a/", `a\b`} {
-		if err := l.Put(context.Background(), k, strings.NewReader("x")); err == nil {
-			t.Errorf("key %q accepted", k)
-		}
+func TestLocal(t *testing.T) {
+	l, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testContract(t, l)
+	// Không để lại file tạm hay thư mục rỗng.
+	if entries, _ := os.ReadDir(l.Root); len(entries) != 0 {
+		t.Fatalf("root not empty: %v", entries)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(l.Root, "*", tmpPrefix+"*")); len(matches) != 0 {
+		t.Fatalf("temp files left: %v", matches)
 	}
 }

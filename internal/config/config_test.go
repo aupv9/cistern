@@ -138,6 +138,10 @@ func TestParseRejects(t *testing.T) {
 		"neg retention":    strings.Replace(minimal, "driver: postgres", "driver: postgres\n    retention: { last: -1, daily: 3 }", 1),
 		"telegram no chat": minimal + "notify: { webhooks: [ { url: http://x, format: telegram } ] }\n",
 		"bad on":           minimal + "notify: { webhooks: [ { url: http://x, on: [always] } ] }\n",
+		"bad lock mode":    strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: http://m:9000, bucket: b, object_lock: { mode: STRICT, days: 3 } }", 1),
+		"lock days":        strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: http://m:9000, bucket: b, object_lock: { mode: COMPLIANCE } }", 1),
+		"bad endpoint":     strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: minio:9000, bucket: b }", 1),
+		"local lock":       strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: local, path: /tmp/r, object_lock: { mode: COMPLIANCE, days: 1 } }", 1),
 	}
 	for name, src := range cases {
 		e := map[string]string{"PGPORT": "1"}

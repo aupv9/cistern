@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListRepository",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketObjectLockConfiguration"],
+      "Resource": "arn:aws:s3:::BUCKET",
+      "Condition": { "StringLike": { "s3:prefix": ["PREFIX/*", "PREFIX/", ""] } }
+    },
+    {
+      "Sid": "WriteAndReadSnapshots",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:PutObjectRetention", "s3:GetObject", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/*"
+    },
+    {
+      "Sid": "ReleaseJobLocksOnly",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/locks/*"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -52,6 +53,7 @@ type Repository struct {
 	Prefix          string      `yaml:"prefix"`
 	AccessKeyID     string      `yaml:"access_key_id"`
 	SecretAccessKey string      `yaml:"secret_access_key"`
+	SessionToken    string      `yaml:"session_token"`
 	PathStyle       bool        `yaml:"path_style"`
 	PartSizeMB      int         `yaml:"part_size_mb"`
 	CAFile          string      `yaml:"ca_file"`
@@ -61,7 +63,7 @@ type Repository struct {
 
 type ObjectLock struct {
 	Mode string `yaml:"mode"` // GOVERNANCE | COMPLIANCE
-	Days int    `yaml:"days"`
+	Days int    `yaml:"days"` // thời gian khóa mỗi artifact/manifest kể từ lúc ghi
 }
 
 type Encryption struct {
@@ -245,6 +247,19 @@ func (c *Config) normalize() error {
 		case "s3":
 			if r.Endpoint == "" || r.Bucket == "" {
 				add("repositories.%s: endpoint and bucket are required for s3 repository", name)
+			} else if u, err := url.Parse(r.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				add("repositories.%s.endpoint: want http(s)://host[:port], got %q", name, r.Endpoint)
+			}
+			if r.Region == "" {
+				r.Region = "us-east-1"
+			}
+			if l := r.ObjectLock; l != nil {
+				if l.Mode != "GOVERNANCE" && l.Mode != "COMPLIANCE" {
+					add("repositories.%s.object_lock.mode: must be GOVERNANCE or COMPLIANCE, got %q", name, l.Mode)
+				}
+				if l.Days < 1 {
+					add("repositories.%s.object_lock.days: must be at least 1", name)
+				}
 			}
 			if r.PartSizeMB == 0 {
 				r.PartSizeMB = 16
@@ -254,6 +269,9 @@ func (c *Config) normalize() error {
 			}
 		default:
 			add("repositories.%s.type: must be local or s3, got %q", name, r.Type)
+		}
+		if r.Type == "local" && r.ObjectLock != nil {
+			add("repositories.%s.object_lock: only supported for s3 repositories", name)
 		}
 	}
 
