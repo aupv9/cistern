@@ -14,6 +14,13 @@
 - TLS 1.2+, `ca_file`, `insecure_skip_verify`; `session_token`; credential từ biến `AWS_*`.
 - `deploy/s3/`: policy IAM tối thiểu cho backup và prune, lifecycle rule, hướng dẫn tạo bucket.
 - e2e `./scripts/e2e-local.sh s3`: MinIO thật, kiểm bằng AWS CLI.
+- FR-21 — `cistern daemon` lập lịch backup (`schedule`) và verify (`verify_schedule`, kiểm snapshot mới
+  nhất) theo `scheduler.timezone`: cron 5 trường (khoảng, bước, danh sách, tên tháng/thứ; ngày-trong-tháng
+  và thứ cùng giới hạn thì khớp một trong hai), `@yearly` … `@hourly`, `@every <duration>`. Job khác nhau
+  chạy song song; lượt đến hạn khi lần trước của cùng job chưa xong thì bỏ qua và ghi cảnh báo; không chạy
+  bù lượt đã lỡ. SIGTERM: dừng HTTP, chờ job đang chạy trong `--grace` (mặc định 5 phút) rồi hủy.
+  `/status` có lịch kế tiếp, đang chạy, lần chạy và lỗi gần nhất, số lượt bị bỏ qua. Biểu thức cron sai
+  bị từ chối khi nạp cấu hình.
 
 ## v0.1 — 2026-11-02 · Phase 1 (Lab)
 

@@ -123,19 +123,32 @@ grep -q 'cistern_snapshots{cistern_job="orders-db"} 2' "$PROM" || fail "cistern_
 grep -q 'cistern_prune_removed_snapshots_total{cistern_job="orders-db"} 1' "$PROM" || fail "prune counter missing"
 cistern verify --job orders-db --snapshot all
 
-step "daemon /metrics"
-cistern daemon --listen 127.0.0.1:19464 2>daemon.log &
+step "daemon: scheduled backup and verify, /metrics, /status, SIGTERM"
+BEFORE=$(cistern list --job orders-db --json | grep -c '"id"')
+sed 's|^    driver: postgres$|    driver: postgres\n    schedule: "@every 3s"\n    verify_schedule: "@every 4s"|' cistern.yaml > cistern-daemon.yaml
+grep -q 'schedule: "@every 3s"' cistern-daemon.yaml || fail "could not add schedule to config"
+cistern daemon -c cistern-daemon.yaml --listen 127.0.0.1:19464 2>daemon.log &
 DPID=$!
-for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/19464) 2>/dev/null && break; sleep 0.25; done
-exec 3<>/dev/tcp/127.0.0.1/19464
-printf 'GET /metrics HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
-METRICS=$(cat <&3); exec 3<&-
-exec 3<>/dev/tcp/127.0.0.1/19464
-printf 'GET /status HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
-STATUS=$(cat <&3); exec 3<&-
-kill -TERM $DPID; wait $DPID || fail "daemon did not exit cleanly"
-echo "$METRICS" | grep -E '^cistern_(backup_last_success|snapshots|build_info)'
-echo "$METRICS" | grep -q 'cistern_snapshots{cistern_job="orders-db"} 2' || fail "daemon metrics not restored from repository"
-echo "$STATUS" | grep -q '"last_success"' || { echo "$STATUS"; fail "status lacks last_success"; }
+sleep 9
+http_get() {
+  exec 3<>/dev/tcp/127.0.0.1/19464
+  printf 'GET %s HTTP/1.0\r\nHost: localhost\r\n\r\n' "$1" >&3
+  cat <&3
+  exec 3<&-
+}
+METRICS=$(http_get /metrics)
+STATUS=$(http_get /status)
+kill -TERM $DPID
+wait $DPID || { cat daemon.log; fail "daemon did not exit cleanly"; }
+AFTER=$(cistern list --job orders-db --json | grep -c '"id"')
+echo "snapshots: $BEFORE before daemon, $AFTER after ~9s of @every 3s"
+[ "$AFTER" -ge $((BEFORE + 2)) ] || { cat daemon.log; fail "scheduled backups did not run"; }
+grep -q 'msg=scheduled job=orders-db op=verify' daemon.log || fail "verify task not scheduled"
+grep -q 'msg="shutting down"' daemon.log || fail "no graceful shutdown in log"
+echo "$METRICS" | grep -E '^cistern_(backup_last_success|verify_last_success|snapshots)'
+echo "$METRICS" | grep -q 'cistern_verify_last_success_timestamp_seconds{cistern_job="orders-db"}' || fail "scheduled verify did not run"
+echo "$STATUS" | grep -q '"op": "backup"' || { echo "$STATUS"; fail "status lacks scheduled tasks"; }
+echo "$STATUS" | grep -q '"last_started"' || { echo "$STATUS"; fail "status lacks last_started"; }
+echo "$STATUS" | sed -n '/"tasks"/,$p'
 
 echo; echo "E2E POSTGRES: PASS"

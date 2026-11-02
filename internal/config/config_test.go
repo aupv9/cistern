@@ -141,6 +141,8 @@ func TestParseRejects(t *testing.T) {
 		"bad lock mode":    strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: http://m:9000, bucket: b, object_lock: { mode: STRICT, days: 3 } }", 1),
 		"lock days":        strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: http://m:9000, bucket: b, object_lock: { mode: COMPLIANCE } }", 1),
 		"bad endpoint":     strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: s3, endpoint: minio:9000, bucket: b }", 1),
+		"bad schedule":     strings.Replace(minimal, "driver: postgres", "driver: postgres\n    schedule: \"0 25 * * *\"", 1),
+		"bad verify":       strings.Replace(minimal, "driver: postgres", "driver: postgres\n    verify_schedule: \"@fortnightly\"", 1),
 		"local lock":       strings.Replace(minimal, "local: { type: local, path: /tmp/r }", "local: { type: local, path: /tmp/r, object_lock: { mode: COMPLIANCE, days: 1 } }", 1),
 	}
 	for name, src := range cases {

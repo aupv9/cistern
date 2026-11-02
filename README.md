@@ -18,9 +18,10 @@ restore được kiểm chứng định kỳ.
 | Metrics: `/metrics` của daemon, Pushgateway, textfile; cảnh báo trong `deploy/k8s/prometheus-rules.yaml` | Xong |
 | Webhook Slack / Teams / Telegram / JSON | Xong |
 | Driver `postgres` | Xong, đã chạy e2e với PostgreSQL 16 |
-| CLI: `backup` `restore` `list` `verify` `prune` `check` `keygen` `daemon` | Xong (daemon chưa lập lịch) |
+| CLI: `backup` `restore` `list` `verify` `prune` `check` `keygen` `daemon` | Xong |
+| Daemon: lập lịch `schedule` / `verify_schedule` (cron 5 trường, `@daily`, `@every`), job song song, bỏ lượt khi lần trước chưa xong, dừng êm khi SIGTERM | Xong |
 | Repository S3 / MinIO: SigV4, multipart, ghi có điều kiện, Object Lock, tự thử lại | Xong, đã chạy e2e với MinIO |
-| Hook pre/post, scheduler của daemon | TODO |
+| Hook pre/post | TODO |
 | 10 driver còn lại, IRSA | TODO |
 
 ## Bắt đầu
@@ -43,7 +44,7 @@ Mọi metric mang label `cistern_job` (không dùng `job` vì trùng label của
 
 | Chế độ | Cách đưa metrics tới Prometheus |
 | --- | --- |
-| `cistern daemon` | Phục vụ `/metrics`; khi khởi động nạp lại thời điểm backup thành công từ repository |
+| `cistern daemon` | Chạy job theo lịch và phục vụ `/metrics`; khi khởi động nạp lại thời điểm backup thành công từ repository |
 | Chạy một lần (CronJob, systemd timer) | `metrics.pushgateway_url`: POST nhóm `job=cistern, instance=<job>`; hoặc `metrics.textfile_dir`: ghi `cistern_<job>.prom` cho node_exporter |
 
 Lần chạy lỗi không xóa thời điểm thành công cũ (POST của Pushgateway chỉ thay metric cùng tên; textfile

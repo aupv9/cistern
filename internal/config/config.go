@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"cistern/internal/cron"
 	"cistern/internal/crypt"
 	"cistern/internal/manifest"
 )
@@ -341,6 +342,16 @@ func (c *Config) normalize() error {
 		seen[j.Name] = true
 		if j.Driver == "" {
 			add("%s.driver: required", p)
+		}
+		if j.Schedule != "" {
+			if _, err := cron.Parse(j.Schedule); err != nil {
+				add("%s.schedule: %v", p, err)
+			}
+		}
+		if j.VerifySchedule != "" {
+			if _, err := cron.Parse(j.VerifySchedule); err != nil {
+				add("%s.verify_schedule: %v", p, err)
+			}
 		}
 		if j.Repository == "" {
 			j.Repository = c.Defaults.Repository

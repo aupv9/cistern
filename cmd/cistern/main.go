@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"cistern/internal/config"
+	"cistern/internal/cron"
 	"cistern/internal/crypt"
 	"cistern/internal/daemon"
 	"cistern/internal/driver"
@@ -295,13 +296,45 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 	if listen == "" {
 		listen = e.Cfg.Metrics.Listen
 	}
+	var tasks []daemon.Task
+	for _, j := range e.Cfg.Jobs {
+		for op, expr := range map[string]string{"backup": j.Schedule, "verify": j.VerifySchedule} {
+			if expr == "" {
+				continue
+			}
+			s, err := cron.Parse(expr) // đã kiểm khi nạp cấu hình
+			if err != nil {
+				return fmt.Errorf("job %s: %w", j.Name, err)
+			}
+			tasks = append(tasks, daemon.Task{Job: j.Name, Op: op, Expr: expr, Schedule: s})
+		}
+	}
+	if len(tasks) == 0 {
+		e.Log.Warn("no job has schedule or verify_schedule: daemon only serves /metrics, /healthz and /status")
+	}
 	e.RefreshMetrics(c.ctx)
-	e.Log.Warn("scheduler is not implemented yet: daemon only serves /metrics, /healthz and /status")
 	return daemon.Run(c.ctx, daemon.Options{
-		Listen:  listen,
-		Grace:   grace,
-		Metrics: e.Metrics.Handler(),
-		Status:  func() any { return e.Status() },
+		Listen:   listen,
+		Grace:    grace,
+		Metrics:  e.Metrics.Handler(),
+		Status:   e.Status,
+		Tasks:    tasks,
+		Location: e.Cfg.Location(),
+		Log:      e.Log,
+		Runner: func(ctx context.Context, job, op string) error {
+			switch op {
+			case "backup":
+				_, err := e.Backup(ctx, job)
+				return err
+			case "verify":
+				rep, err := e.Verify(ctx, job, "latest")
+				if err == nil && rep.Failures > 0 {
+					err = fmt.Errorf("verify: %d artifact(s) failed", rep.Failures)
+				}
+				return err
+			}
+			return fmt.Errorf("unknown op %q", op)
+		},
 	})
 }
 
