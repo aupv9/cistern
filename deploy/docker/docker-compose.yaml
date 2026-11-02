@@ -1,0 +1,17 @@
+services:
+  cistern:
+    image: cistern:dev
+    command: ["daemon", "--listen", ":9464"]
+    read_only: true
+    user: "10001:10001"
+    environment:
+      CISTERN_CONFIG: /etc/cistern/cistern.yaml
+      CISTERN_TMPDIR: /tmp/cistern
+    volumes:
+      - ../../examples/cistern.yaml:/etc/cistern/cistern.yaml:ro
+    tmpfs:
+      - /tmp
+    ports: ["9464:9464"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9464/healthz"]
+      interval: 30s

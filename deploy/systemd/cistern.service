@@ -1,0 +1,21 @@
+[Unit]
+Description=Cistern backup daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cistern
+Group=cistern
+Environment=CISTERN_CONFIG=/etc/cistern/cistern.yaml
+EnvironmentFile=-/etc/cistern/cistern.env
+ExecStart=/usr/local/bin/cistern daemon --listen :9464
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+StateDirectory=cistern
+ReadWritePaths=/var/lib/cistern
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,66 @@
+# Ví dụ cấu hình Cistern — xem docs/TDD.md §Cấu hình. Khóa lạ bị từ chối.
+repositories:
+  local:
+    type: local
+    path: /var/lib/cistern/repo
+  s3-main:
+    type: s3
+    endpoint: https://s3.ap-southeast-1.amazonaws.com
+    bucket: company-backups
+    access_key_id: ${S3_ACCESS_KEY_ID}
+    secret_access_key: ${S3_SECRET_ACCESS_KEY}
+    path_style: false
+    part_size_mb: 16
+    object_lock: { mode: COMPLIANCE, days: 30 }
+
+encryption:
+  # Public key tạo bằng `cistern keygen --out identity.txt` hoặc `age-keygen`.
+  recipients:
+    - ${CISTERN_RECIPIENT}
+  # recipients_file: recipients.txt            # đường dẫn tương đối tính theo file cấu hình
+  # identity_file: /etc/cistern/identity.txt   # chỉ mount ở pod verify/restore
+
+compression:
+  level: 6
+
+metrics:
+  listen: ":9464"
+  # pushgateway_url: http://pushgateway:9091
+  # textfile_dir: /var/lib/node_exporter/textfile
+
+notify:
+  webhooks:
+    - url: ${SLACK_WEBHOOK_URL}
+      format: slack                 # slack | teams | telegram (cần chat_id) | json
+      on: [failure]                 # thêm success để báo cả khi thành công
+
+scheduler:
+  timezone: Asia/Ho_Chi_Minh
+
+defaults:
+  repository: s3-main
+  timeout: 6h
+  # GFS theo finished_at và scheduler.timezone: last, hourly, daily, weekly, monthly, yearly.
+  retention: { last: 3, daily: 7, weekly: 4, monthly: 6 }
+  prune_after_backup: true
+
+jobs:
+  - name: orders-db
+    driver: postgres
+    schedule: "0 2 * * *"
+    verify_schedule: "@daily"
+    params:
+      host: ${PGHOST}
+      port: ${PGPORT:-5432}
+      user: backup
+      password: ${PGPASSWORD}
+      databases: [orders]
+    hooks:
+      post_restore: ./scripts/check-orders.sh
+
+  - name: cache
+    driver: redis
+    schedule: "@every 6h"
+    params:
+      host: redis
+      port: 6379

@@ -1,0 +1,40 @@
+# Cảnh báo dùng gauge thời điểm (không dùng counter) để đúng cho cả daemon lẫn CronJob + Pushgateway:
+# mỗi lần CronJob là một process mới nên counter luôn bắt đầu từ 0.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cistern
+spec:
+  groups:
+    - name: cistern
+      rules:
+        - alert: CisternBackupFailing
+          # Lần lỗi gần nhất mới hơn lần thành công gần nhất (hoặc chưa từng thành công).
+          expr: |
+            cistern_backup_last_failure_timestamp_seconds
+              > (cistern_backup_last_success_timestamp_seconds or cistern_backup_last_failure_timestamp_seconds * 0)
+          labels: { severity: critical }
+          annotations:
+            summary: "Backup {{ $labels.cistern_job }} đang lỗi"
+        - alert: CisternBackupStale
+          expr: time() - cistern_backup_last_success_timestamp_seconds > 36 * 3600
+          labels: { severity: critical }
+          annotations:
+            summary: "Backup {{ $labels.cistern_job }} quá 36 giờ chưa thành công"
+        - alert: CisternBackupSizeDrop
+          expr: cistern_backup_last_size_bytes < 0.5 * cistern_backup_previous_size_bytes
+          labels: { severity: warning }
+          annotations:
+            summary: "Bản backup mới nhất của {{ $labels.cistern_job }} nhỏ hơn một nửa bản trước"
+        - alert: CisternVerifyStale
+          expr: time() - cistern_verify_last_success_timestamp_seconds > 8 * 86400
+          labels: { severity: warning }
+          annotations:
+            summary: "{{ $labels.cistern_job }} quá 8 ngày chưa verify/restore thành công"
+        - alert: CisternVerifyFailing
+          expr: |
+            cistern_verify_last_failure_timestamp_seconds
+              > (cistern_verify_last_success_timestamp_seconds or cistern_verify_last_failure_timestamp_seconds * 0)
+          labels: { severity: critical }
+          annotations:
+            summary: "Verify {{ $labels.cistern_job }} phát hiện snapshot hỏng"
