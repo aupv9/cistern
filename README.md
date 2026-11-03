@@ -2,6 +2,7 @@
 
 **One tool, one snapshot format and one set of alerts for backing up databases, brokers and object storage — with restores you can verify.**
 
+[![CI](https://github.com/aupv9/cistern/actions/workflows/ci.yaml/badge.svg)](https://github.com/aupv9/cistern/actions/workflows/ci.yaml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go 1.24+](https://img.shields.io/badge/go-1.24%2B-00ADD8.svg)](go.mod)
 [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-orange.svg)](#project-status)

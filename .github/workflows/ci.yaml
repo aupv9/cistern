@@ -15,3 +15,21 @@ jobs:
       - run: go test ./...
       - run: go test -race ./...
       - run: go build ./cmd/cistern
+
+  # End-to-end tests against real systems in Docker (scripts/e2e-local.sh), one job per target.
+  e2e:
+    name: e2e (${{ matrix.target }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [postgres, s3, mysql, mariadb, s3-driver]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.24"
+          cache-dependency-path: go.mod
+      - run: ./scripts/e2e-local.sh ${{ matrix.target }}
