@@ -4,9 +4,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: "1.24" }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.24"
+          # No third-party modules, so there is no go.sum to key the build cache on.
+          cache-dependency-path: go.mod
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
