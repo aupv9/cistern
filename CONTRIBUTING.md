@@ -61,7 +61,7 @@ Images can be overridden with `PG_IMAGE`, `MYSQL_IMAGE`, `MARIADB_IMAGE`, `MINIO
 | `internal/daemon`, `internal/metrics`, `internal/notify` | Scheduler and HTTP server, Prometheus, webhooks |
 | `internal/thirdparty/xcrypto` | Unmodified subset of `golang.org/x/crypto` |
 | `deploy/` | Docker, Kubernetes and systemd examples, IAM policies |
-| `docs/` | User documentation; `docs/design` holds the original PRD and TDD |
+| `docs/` | User documentation |
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 

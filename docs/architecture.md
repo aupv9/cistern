@@ -149,5 +149,3 @@ The testing and documentation checklist is in [CONTRIBUTING.md](../CONTRIBUTING.
 | Own S3 client (SigV4) | No SDK dependency; only put, get, list, delete and multipart are needed |
 | Drivers call native tools via `exec` | Use each system's supported dump format instead of reimplementing it |
 | One artifact per object in the S3 driver | Restoring one object is fast; the cost is more objects in the repository |
-
-The original requirements and design documents (in Vietnamese) are in [design/](design/).

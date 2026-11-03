@@ -1,5 +1,5 @@
 // Package engine điều phối job: khóa, sink/source cho driver, manifest, verify, restore.
-// Xem TDD §Luồng backup / §Luồng restore, verify và prune.
+// Xem docs/architecture.md.
 //
 // TODO: hook pre/post, repository S3, incremental (Previous).
 package engine
@@ -767,7 +767,7 @@ func (e *Engine) Restore(ctx context.Context, jobName, ref string, overrides map
 		ev.Snapshot = m.ID
 	}
 	if err == nil {
-		// Restore thành công cũng chứng minh snapshot dùng được (TDD §restore bước 6).
+		// Restore thành công cũng chứng minh snapshot dùng được (docs/architecture.md).
 		e.Metrics.Set(metrics.VerifyLastSuccess, metrics.Job(job.Name), unix(e.now()))
 	}
 	e.notifier.Send(ctx, ev)

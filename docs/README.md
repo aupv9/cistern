@@ -19,4 +19,3 @@
 
 - [Architecture](architecture.md) — snapshot format, pipeline, retention, writing a driver
 - [Contributing](../CONTRIBUTING.md)
-- [Design documents](design/) — original product requirements (PRD) and technical design (TDD), in Vietnamese

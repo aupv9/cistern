@@ -136,8 +136,6 @@ recipients used and the snapshots it depends on. See [Architecture](docs/archite
 | [Disaster recovery](docs/disaster-recovery.md) | Restoring without Cistern |
 | [Architecture](docs/architecture.md) | Snapshot format, retention, incremental backups, writing a driver |
 
-The original product requirements and technical design (in Vietnamese) are kept in
-[docs/design](docs/design/).
 
 ## Project status
 

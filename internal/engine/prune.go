@@ -42,7 +42,7 @@ type PruneReport struct {
 	Errors  int         `json:"errors"`
 }
 
-// Prune áp retention cho job (TDD §prune). dryRun chỉ báo cáo, không khóa, không xóa.
+// Prune áp retention cho job (docs/architecture.md#retention). dryRun chỉ báo cáo, không khóa, không xóa.
 func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*PruneReport, error) {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {
