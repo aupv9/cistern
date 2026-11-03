@@ -26,6 +26,20 @@ The [Dockerfile](../Dockerfile) builds a multi-architecture image (`linux/amd64`
 Packages are installed with GPG verification against the MySQL and PGDG signing keys. The image
 works with a read-only root filesystem as long as `/tmp` is writable.
 
+Published images are at `ghcr.io/aupv9/cistern`, built by CI only after every test has passed:
+
+| Tag | Points to |
+| --- | --- |
+| `vX.Y` and `latest` | a release (from the next release on) |
+| `main` | the newest commit on `main` |
+| `sha-<commit>` | a specific commit |
+
+```sh
+docker pull ghcr.io/aupv9/cistern:main
+```
+
+To build your own, for example with another PostgreSQL major:
+
 ```sh
 docker build --build-arg VERSION=v0.2.0 -t registry.example.com/cistern:v0.2.0 .
 docker build --build-arg PG_MAJOR=17 -t registry.example.com/cistern:v0.2.0-pg17 .
@@ -74,8 +88,8 @@ configMapGenerator:
     files: [cistern.yaml]
 images:
   - name: cistern
-    newName: registry.example.com/cistern
-    newTag: v0.2.0
+    newName: ghcr.io/aupv9/cistern
+    newTag: main
 ```
 
 ```sh

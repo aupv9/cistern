@@ -16,6 +16,8 @@ All notable changes to this project are documented in this file. The format is b
   credentials) and `monitoring` (PrometheusRule). Pods run non-root with a read-only root
   filesystem, no capabilities and `seccompProfile: RuntimeDefault`.
 - End-to-end target `image` and `scripts/e2e-k8s.sh` (k3d), both run in CI.
+- Images published to `ghcr.io/aupv9/cistern` (`linux/amd64`, `linux/arm64`) by CI after all tests
+  pass: `main` and `sha-<commit>` for `main`, `vX.Y` and `latest` for release tags.
 
 ### Changed
 

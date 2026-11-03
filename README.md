@@ -49,10 +49,12 @@ Backups are only worth what their restores are worth, so Cistern is built around
 
 ## Quick start
 
-Build from a checkout of this repository (Go 1.24 or newer):
+Build from a checkout of this repository (Go 1.24 or newer), or use the container image with the
+PostgreSQL and MySQL clients included:
 
 ```sh
-make build                      # produces bin/cistern
+make build                                  # produces bin/cistern
+docker pull ghcr.io/aupv9/cistern:main      # linux/amd64 and linux/arm64
 ```
 
 Create an encryption key. Keep `identity.txt` **outside** the backup system; Cistern only needs the
