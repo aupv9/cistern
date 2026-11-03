@@ -65,7 +65,7 @@ spec:
           secret:
             secretName: cistern-keys
             optional: true
-            defaultMode: 0400
+            defaultMode: 0440
         - name: tmp
           emptyDir:
             sizeLimit: 20Gi

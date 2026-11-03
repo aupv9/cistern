@@ -16,7 +16,15 @@ cleanup() {
 }
 trap cleanup EXIT
 step() { echo; echo "==> $*"; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  if kubectl get namespace "$NS" >/dev/null 2>&1; then
+    echo "--- pods"; kubectl -n "$NS" get pods -o wide || true
+    echo "--- cistern logs"; kubectl -n "$NS" logs deploy/cistern --tail=80 || true
+    echo "--- events"; kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -20 || true
+  fi
+  exit 1
+}
 k() { kubectl -n "$NS" "$@"; }
 pgsql() { k exec deploy/postgres -- psql -At -U postgres "$@"; }
 
