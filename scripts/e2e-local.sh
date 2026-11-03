@@ -15,9 +15,12 @@ TARGETS=${*:-postgres s3 mysql mariadb s3-driver}
 PG_IMAGE=${PG_IMAGE:-postgres:16}
 MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4}
 MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4}
-# Docker Hub không còn image minio/minio; dùng bản dựng của Chainguard.
-MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
-AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:latest}
+# Image ngoài được pin theo digest (manifest list, chạy được cả amd64 lẫn arm64) để CI không đổi
+# theo bản phát hành mới. Nâng phiên bản: docker buildx imagetools inspect <image>:latest, chạy
+# ./scripts/e2e-local.sh s3 s3-driver với digest mới, rồi cập nhật dưới đây.
+# Docker Hub không còn image minio/minio; Chainguard chỉ có tag latest miễn phí nên pin bằng digest.
+MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f} # RELEASE.2026-10-23T20-06-51Z
+AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f}
 MINIO_USER=e2eadmin
 MINIO_PASS=e2e-minio-secret
 ID=cistern-e2e-$$

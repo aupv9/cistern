@@ -42,7 +42,9 @@ the S3 client and repository are tested against an in-memory S3 server
 ```
 
 Images can be overridden with `PG_IMAGE`, `MYSQL_IMAGE`, `MARIADB_IMAGE`, `MINIO_IMAGE` and
-`AWS_CLI_IMAGE`. The script removes its containers and volumes when it exits.
+`AWS_CLI_IMAGE`. MinIO and the AWS CLI are pinned by digest so CI does not change with their
+releases; to update them, see the comment above the defaults in `scripts/e2e-local.sh`. The script
+removes its containers and volumes when it exits.
 
 CI runs every target as a separate job after the unit tests pass
 ([.github/workflows/ci.yaml](.github/workflows/ci.yaml)).
