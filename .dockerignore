@@ -1,0 +1,9 @@
+.git
+.idea
+bin
+*.age
+identity*.txt
+docs
+deploy
+scripts
+examples

@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cistern-e2e
+resources:
+  - ../../../deploy/k8s/base
+  - ../../../deploy/k8s/cronjob
+  - postgres.yaml
+  - pvc.yaml
+configMapGenerator:
+  - name: cistern-config
+    files:
+      - cistern.yaml
+images:
+  - name: cistern
+    newName: cistern
+    newTag: dev
+patches:
+  - target: { kind: Deployment, name: cistern }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: { name: repo, persistentVolumeClaim: { claimName: cistern-repo } }
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: { name: repo, mountPath: /data }
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+  - target: { kind: CronJob }
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/volumes/-
+        value: { name: repo, persistentVolumeClaim: { claimName: cistern-repo } }
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/volumeMounts/-
+        value: { name: repo, mountPath: /data }
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/imagePullPolicy
+        value: Never

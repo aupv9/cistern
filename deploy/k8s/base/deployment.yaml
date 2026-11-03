@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cistern
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+    spec:
+      serviceAccountName: cistern
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 330
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cistern
+          image: cistern
+          args: ["daemon", "--grace", "5m"]
+          ports:
+            - name: metrics
+              containerPort: 9464
+          envFrom:
+            - secretRef:
+                name: cistern-env
+                optional: true
+          env:
+            - name: CISTERN_CONFIG
+              value: /etc/cistern/cistern.yaml
+            - name: CISTERN_TMPDIR
+              value: /tmp
+          readinessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/cistern, readOnly: true }
+            - { name: keys, mountPath: /etc/cistern-keys, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: cistern-config
+        - name: keys
+          secret:
+            secretName: cistern-keys
+            optional: true
+            defaultMode: 0400
+        - name: tmp
+          emptyDir:
+            sizeLimit: 20Gi

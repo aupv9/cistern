@@ -35,6 +35,7 @@ the S3 client and repository are tested against an in-memory S3 server
 | `mysql` | MySQL 8.4.13, local repository |
 | `mariadb` | MariaDB 11.4.13, local repository, manual recovery with `age` |
 | `s3-driver` | S3 driver against MinIO, incremental backups, S3 repository with Object Lock |
+| `image` | The container image (`CISTERN_IMAGE`, default `cistern:dev`) against PostgreSQL, MySQL and MariaDB, as UID 10001 on a read-only root filesystem |
 
 ```sh
 ./scripts/e2e-local.sh                  # all targets
@@ -53,6 +54,9 @@ releases. To move to a newer image:
 3. update the default in `scripts/e2e-local.sh`.
 
 MinIO is pinned by digest only, because Chainguard publishes only a `latest` tag for free.
+
+`scripts/e2e-k8s.sh` (`make e2e-k8s`) deploys `deploy/k8s` to a throwaway k3d cluster; it needs `k3d`,
+`kubectl` and enough free inotify instances in the Docker VM.
 
 CI runs every target as a separate job after the unit tests pass
 ([.github/workflows/ci.yaml](.github/workflows/ci.yaml)).

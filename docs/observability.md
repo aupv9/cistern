@@ -36,7 +36,7 @@ same name, and textfiles are merged with their previous content.
 
 ## Alerts
 
-[deploy/k8s/prometheus-rules.yaml](../deploy/k8s/prometheus-rules.yaml) contains:
+[deploy/k8s/monitoring/prometheus-rules.yaml](../deploy/k8s/monitoring/prometheus-rules.yaml) contains:
 
 | Alert | Fires when |
 | --- | --- |

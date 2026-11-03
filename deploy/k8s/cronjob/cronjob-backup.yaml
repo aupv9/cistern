@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cistern-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cistern
+              image: cistern
+              args: ["backup", "--all"]
+              envFrom:
+                - secretRef:
+                    name: cistern-env
+                    optional: true
+              env:
+                - name: CISTERN_CONFIG
+                  value: /etc/cistern/cistern.yaml
+                - name: CISTERN_TMPDIR
+                  value: /tmp
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { memory: 1Gi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - { name: config, mountPath: /etc/cistern, readOnly: true }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: config
+              configMap:
+                name: cistern-config
+            - name: tmp
+              emptyDir:
+                sizeLimit: 20Gi

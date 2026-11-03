@@ -31,3 +31,23 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: go.mod
       - run: ./scripts/e2e-local.sh ${{ matrix.target }}
+
+  image:
+    name: image and kubernetes
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.24"
+          cache-dependency-path: go.mod
+      - run: docker build --build-arg VERSION="$(git describe --tags --always)" -t cistern:dev .
+      - run: ./scripts/e2e-local.sh image
+      - name: Install k3d
+        run: |
+          curl -fsSLo k3d https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64
+          echo "06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0  k3d" | sha256sum -c -
+          sudo install -m 0755 k3d /usr/local/bin/k3d
+      - run: ./scripts/e2e-k8s.sh

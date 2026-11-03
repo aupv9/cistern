@@ -1,0 +1,18 @@
+repositories:
+  local: { type: local, path: /data/repo }
+encryption:
+  recipients: ["${CISTERN_RECIPIENT}"]
+  identity_file: /etc/cistern-keys/identity.txt
+scheduler:
+  timezone: Asia/Ho_Chi_Minh
+jobs:
+  - name: app
+    driver: postgres
+    schedule: "@every 20s"
+    verify_schedule: "@every 30s"
+    retention: { last: 2 }
+    params:
+      host: postgres
+      user: postgres
+      password: ${DB_PASSWORD}
+      databases: [app]

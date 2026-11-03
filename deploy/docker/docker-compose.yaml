@@ -3,6 +3,7 @@ services:
     image: cistern:dev
     command: ["daemon", "--listen", ":9464"]
     read_only: true
+    stop_grace_period: 6m
     user: "10001:10001"
     environment:
       CISTERN_CONFIG: /etc/cistern/cistern.yaml

@@ -146,7 +146,6 @@ the test suite, but the snapshot format and configuration may still change befor
 Known gaps:
 
 - `hooks` (pre/post backup and restore) are parsed but **not executed yet**
-- The container image and Kubernetes manifests in [deploy/](deploy/) have not been verified
 - No IRSA / instance-profile credentials for S3 yet; use static keys or `AWS_*` variables
 - The remaining drivers listed under *Planned*
 

@@ -6,6 +6,22 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Container image for `linux/amd64` and `linux/arm64` on `oraclelinux:9-slim` with the PostgreSQL
+  client from PGDG (`PG_MAJOR`, default 16) and the MySQL 8.4 client, GPG-verified; runs as UID 10001
+  on a read-only root filesystem. The MySQL client also backs up MariaDB servers.
+- Kubernetes manifests in `deploy/k8s`: `base` (daemon Deployment, Service, NetworkPolicy,
+  ServiceAccount without a token), `cronjob` (`backup --all`, `prune --all` with separate
+  credentials) and `monitoring` (PrometheusRule). Pods run non-root with a read-only root
+  filesystem, no capabilities and `seccompProfile: RuntimeDefault`.
+- End-to-end target `image` and `scripts/e2e-k8s.sh` (k3d), both run in CI.
+
+### Changed
+
+- `deploy/k8s` is split into `base`, `cronjob` and `monitoring`; the previous single CronJob and
+  kustomization are removed.
+
 ## [0.2] - 2026-11-03
 
 Everything planned for the first production milestone is now implemented: PostgreSQL, MySQL/MariaDB
