@@ -34,7 +34,7 @@ Published images are at `ghcr.io/aupv9/cistern`, built by CI only after every te
 
 | Tag | Points to |
 | --- | --- |
-| `vX.Y` and `latest` | a release (from the next release on) |
+| `vX.Y` and `latest` | a release |
 | `main` | the newest commit on `main` |
 | `sha-<commit>` | a specific commit |
 

@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.3] - 2026-11-03
+
+Adds the Admin UI: a web interface and REST API to watch jobs, run backups and verifies, and restore
+with two-person approval for production, served by a new `cistern server` that holds no private key.
+
 ### Added
 
 - Container image for `linux/amd64` and `linux/arm64` on `oraclelinux:9-slim` with the PostgreSQL
@@ -54,6 +59,11 @@ All notable changes to this project are documented in this file. The format is b
   expands to an empty string (for example, the server needs no database passwords and the daemon no
   session key). See [Configuration](docs/configuration.md#environment-variables).
 - Local repositories list only the directory of the requested prefix instead of the whole tree.
+
+### Fixed
+
+- The daemon skips a scheduled run when another operation of the same job is already running,
+  instead of logging it as a failed run (backup and verify coming due in the same tick).
 
 ## [0.2] - 2026-11-03
 
@@ -126,6 +136,7 @@ First release: end-to-end PostgreSQL backups to a local repository.
   Slack/Teams/Telegram/JSON webhooks.
 - `cistern keygen`, `cistern check`, `cistern daemon` (HTTP only).
 
-[Unreleased]: https://github.com/aupv9/cistern/compare/v0.2...HEAD
+[Unreleased]: https://github.com/aupv9/cistern/compare/v0.3...HEAD
+[0.3]: https://github.com/aupv9/cistern/compare/v0.2...v0.3
 [0.2]: https://github.com/aupv9/cistern/compare/v0.1...v0.2
 [0.1]: https://github.com/aupv9/cistern/releases/tag/v0.1
