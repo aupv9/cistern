@@ -1,7 +1,3 @@
-// Package crypt hiện thực định dạng age v1 (https://age-encryption.org/v1) cho recipient X25519:
-// header có một stanza cho mỗi recipient và HMAC-SHA256; payload chia khối 64 KiB, mỗi khối mã hóa
-// bằng ChaCha20-Poly1305, khối cuối có cờ riêng để phát hiện file bị cắt cụt.
-// Kết quả tương thích CLI `age` / `age -d -i`.
 package crypt
 
 import (
@@ -44,7 +40,6 @@ type stanza struct {
 	body []byte
 }
 
-// Encrypt trả về writer mã hóa vào dst; phải gọi Close để ghi khối cuối.
 func Encrypt(dst io.Writer, recipients ...*Recipient) (io.WriteCloser, error) {
 	if len(recipients) == 0 {
 		return nil, errors.New("age: no recipients")
@@ -118,7 +113,7 @@ func writeStanza(w *bytes.Buffer, s *stanza) {
 		w.WriteString(enc[:bodyColumns] + "\n")
 		enc = enc[bodyColumns:]
 	}
-	w.WriteString(enc + "\n") // dòng cuối luôn ngắn hơn 64 ký tự (có thể rỗng)
+	w.WriteString(enc + "\n")
 }
 
 func headerMAC(fileKey, header []byte) ([]byte, error) {
@@ -144,7 +139,6 @@ func payloadAEAD(fileKey, nonce []byte) (aeadCipher, error) {
 	return chacha20poly1305.New(key)
 }
 
-// chunkNonce: bộ đếm 11 byte big-endian + 1 byte cờ khối cuối.
 func chunkNonce(counter uint64, last bool) []byte {
 	n := make([]byte, chacha20poly1305.NonceSize)
 	for i := 10; i >= 3; i-- {
@@ -175,7 +169,7 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 	}
 	total := len(p)
 	for len(p) > 0 {
-		// Chỉ đẩy một khối đầy khi chắc chắn còn dữ liệu sau nó (khối cuối mang cờ riêng).
+
 		if len(w.buf) == chunkSize {
 			if err := w.flush(false); err != nil {
 				return total - len(p), err
@@ -210,8 +204,6 @@ func (w *streamWriter) Close() error {
 	return w.flush(true)
 }
 
-// Decrypt đọc header, mở file key bằng một trong các identity và trả về reader giải mã.
-// Lỗi xác thực hoặc cắt cụt được trả về khi đọc tới khối tương ứng.
 func Decrypt(src io.Reader, identities ...*Identity) (io.Reader, error) {
 	if len(identities) == 0 {
 		return nil, errors.New("age: no identities")
@@ -310,7 +302,6 @@ func readLine(br *bufio.Reader) (string, error) {
 	}
 }
 
-// parseHeader trả về stanza, phần header dùng tính MAC (tới hết "---") và MAC.
 func parseHeader(br *bufio.Reader) ([]*stanza, []byte, []byte, error) {
 	var raw bytes.Buffer
 	line, err := readLine(br)
@@ -403,7 +394,7 @@ func (r *streamReader) next() error {
 	last := false
 	switch {
 	case err == io.EOF:
-		return ErrTruncated // thiếu khối cuối
+		return ErrTruncated
 	case err == io.ErrUnexpectedEOF:
 		last = true
 	case err != nil:
@@ -421,7 +412,7 @@ func (r *streamReader) next() error {
 	out, err := r.aead.Open(r.enc[:0:0], chunkNonce(r.counter, last), r.enc[:n], nil)
 	if err != nil {
 		if !last {
-			// Khối đầy mà không mở được với cờ "chưa cuối": hoặc hỏng, hoặc bị cắt ngay sau khối này.
+
 			if _, err2 := r.aead.Open(nil, chunkNonce(r.counter, true), r.enc[:n], nil); err2 == nil {
 				return errors.New("age: trailing data after final chunk")
 			}

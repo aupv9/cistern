@@ -16,10 +16,8 @@ const (
 	identityHRP  = "age-secret-key-"
 )
 
-// Recipient là public key X25519 dạng age1...
 type Recipient struct{ pub *ecdh.PublicKey }
 
-// Identity là private key X25519 dạng AGE-SECRET-KEY-1...
 type Identity struct{ priv *ecdh.PrivateKey }
 
 func GenerateIdentity() (*Identity, error) {
@@ -72,14 +70,12 @@ func (i *Identity) String() string {
 
 func (i *Identity) Recipient() *Recipient { return &Recipient{pub: i.priv.PublicKey()} }
 
-// WriteIdentityFile ghi theo định dạng của age-keygen.
 func WriteIdentityFile(w io.Writer, id *Identity, now time.Time) error {
 	_, err := fmt.Fprintf(w, "# created: %s\n# public key: %s\n%s\n",
 		now.Format(time.RFC3339), id.Recipient(), id)
 	return err
 }
 
-// ParseIdentities đọc file identity (bỏ dòng trống và dòng #).
 func ParseIdentities(r io.Reader) ([]*Identity, error) {
 	var ids []*Identity
 	err := scanKeyLines(r, func(line string) error {
@@ -95,7 +91,6 @@ func ParseIdentities(r io.Reader) ([]*Identity, error) {
 	return ids, err
 }
 
-// ParseRecipients đọc file recipient (bỏ dòng trống và dòng #).
 func ParseRecipients(r io.Reader) ([]*Recipient, error) {
 	var rs []*Recipient
 	err := scanKeyLines(r, func(line string) error {

@@ -14,7 +14,7 @@ import (
 )
 
 func TestBech32Vectors(t *testing.T) {
-	// BIP-173 vectors hợp lệ.
+
 	for _, s := range []string{"A12UEL5L", "abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw"} {
 		if _, _, err := bech32Decode(s); err != nil {
 			t.Errorf("%s: %v", s, err)
@@ -64,7 +64,7 @@ func encrypt(t *testing.T, plain []byte, rs ...*Recipient) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Ghi lẻ từng mẩu để thử ranh giới khối.
+
 	for p := plain; len(p) > 0; {
 		n := min(len(p), 7777)
 		if _, err := w.Write(p[:n]); err != nil {
@@ -147,7 +147,6 @@ func flip(b []byte, i int) []byte {
 	return c
 }
 
-// TestAgeCLIInterop chạy khi có `age` trong PATH: hai chiều, Cistern ↔ age.
 func TestAgeCLIInterop(t *testing.T) {
 	ageBin, err := exec.LookPath("age")
 	if err != nil {
@@ -163,7 +162,6 @@ func TestAgeCLIInterop(t *testing.T) {
 	plain := make([]byte, 2*chunkSize+999)
 	rand.Read(plain)
 
-	// Cistern mã hóa → age giải mã.
 	enc := filepath.Join(dir, "u.age")
 	os.WriteFile(enc, encrypt(t, plain, id.Recipient()), 0o600)
 	out, err := exec.Command(ageBin, "-d", "-i", idFile, enc).Output()
@@ -171,7 +169,6 @@ func TestAgeCLIInterop(t *testing.T) {
 		t.Fatalf("age -d failed: %v", err)
 	}
 
-	// age mã hóa → Cistern giải mã.
 	cmd := exec.Command(ageBin, "-r", id.Recipient().String())
 	cmd.Stdin = bytes.NewReader(plain)
 	ageEnc, err := cmd.Output()

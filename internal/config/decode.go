@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// expandEnv thay ${VAR} và ${VAR:-mặc định} trong mọi scalar, trừ các giá trị dưới khóa "hooks"
-// (hook là lệnh shell, biến được shell thay lúc chạy).
 func expandEnv(n *node, lookup func(string) (string, bool)) error {
 	if n == nil {
 		return nil
@@ -86,7 +84,6 @@ func validEnvName(s string) bool {
 
 var durationType = reflect.TypeOf(time.Duration(0))
 
-// decode gán node vào v theo tag `yaml:"tên"`; khóa không có trong struct bị từ chối.
 func decode(n *node, v reflect.Value, path string) error {
 	if n.isNull() && v.Kind() != reflect.String {
 		return nil
@@ -165,7 +162,7 @@ func decode(n *node, v reflect.Value, path string) error {
 				v.SetString(n.value)
 			}
 		case n.kind == sequenceNode:
-			// Danh sách scalar gán vào chuỗi (vd. params.databases: [a, b]) được nối bằng dấu phẩy.
+
 			parts := make([]string, len(n.items))
 			for i, it := range n.items {
 				if it.kind != scalarNode {
@@ -211,7 +208,6 @@ func join(path, k string) string {
 	return path + "." + k
 }
 
-// parseDuration nhận cú pháp của time.ParseDuration và thêm hậu tố "d" (ngày).
 func parseDuration(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "d") {
 		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))

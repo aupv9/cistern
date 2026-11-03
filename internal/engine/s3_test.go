@@ -65,7 +65,7 @@ func TestS3RepositoryLifecycle(t *testing.T) {
 	srv := s3test.New(true)
 	defer srv.Close()
 	e, c := newS3Engine(t, srv, "    object_lock: { mode: COMPLIANCE, days: 3 }")
-	// big.dump có 6 MB dữ liệu ngẫu nhiên: bản lưu vượt part 5 MiB nên đi đường multipart.
+
 	j := e.Cfg.Jobs[0]
 	j.Params["big"], j.Params["big_size"] = "db/big.dump", "6000000"
 
@@ -93,7 +93,7 @@ func TestS3RepositoryLifecycle(t *testing.T) {
 	if !multipart {
 		t.Error("expected a multipart upload for big.dump")
 	}
-	if len(srv.Versions("cistern/locks/app.lock")) != 2 { // ghi rồi xóa (delete marker)
+	if len(srv.Versions("cistern/locks/app.lock")) != 2 {
 		t.Errorf("lock versions: %+v", srv.Versions("cistern/locks/app.lock"))
 	}
 
@@ -107,7 +107,6 @@ func TestS3RepositoryLifecycle(t *testing.T) {
 		t.Fatalf("restored %d bytes", len(got))
 	}
 
-	// Backup thứ hai rồi prune (last: 1): snapshot đầu biến mất khỏi danh sách, bản khóa còn nguyên.
 	c.t = c.t.Add(time.Hour)
 	if _, err := e.Backup(ctx, "app"); err != nil {
 		t.Fatal(err)

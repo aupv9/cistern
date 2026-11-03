@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
-# End-to-end với hệ thống thật trong Docker.
-#   ./scripts/e2e-local.sh              # tất cả
-#   ./scripts/e2e-local.sh postgres     # PostgreSQL + repository local
-#   ./scripts/e2e-local.sh s3           # PostgreSQL + repository S3 (MinIO) có Object Lock
-#   ./scripts/e2e-local.sh mysql        # MySQL + repository local
-#   ./scripts/e2e-local.sh mariadb      # MariaDB + repository local
-#   ./scripts/e2e-local.sh s3-driver    # driver s3 (MinIO, incremental) + repository S3 có Object Lock
-# Biến môi trường: PG_IMAGE, MYSQL_IMAGE, MARIADB_IMAGE, MINIO_IMAGE, AWS_CLI_IMAGE,
-# SKIP_DR=1 (bỏ bước cài age để khôi phục thủ công).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGETS=${*:-postgres s3 mysql mariadb s3-driver}
-# Mọi image được pin theo phiên bản chính xác và digest (manifest list, chạy được cả amd64 lẫn arm64)
-# để CI không đổi theo bản phát hành mới. Nâng phiên bản: docker buildx imagetools inspect <image:tag>,
-# chạy ./scripts/e2e-local.sh với image mới (qua biến môi trường bên dưới), rồi cập nhật ở đây.
 PG_IMAGE=${PG_IMAGE:-postgres:16.15@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a}
 MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902}
 MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620}
-# Docker Hub không còn image minio/minio; Chainguard chỉ có tag latest miễn phí nên pin bằng digest.
-MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f} # RELEASE.2026-10-23T20-06-51Z
+MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f}
 AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f}
 MINIO_USER=e2eadmin
 MINIO_PASS=e2e-minio-secret
@@ -45,11 +32,9 @@ start_pg() {
   step "start $PG_IMAGE"
   docker run -d --name "$ID-pg" --network "$ID" -e POSTGRES_PASSWORD=e2e-secret "$PG_IMAGE" >/dev/null
   for _ in $(seq 1 60); do
-    # -h 127.0.0.1: bỏ qua server tạm của bước init (chỉ nghe unix socket)
     docker exec "$ID-pg" pg_isready -q -h 127.0.0.1 -U postgres && break
     sleep 1
   done
-  # Binary và script đi qua stdin, không cần chia sẻ thư mục với Docker.
   docker exec -i "$ID-pg" sh -c 'cat > /usr/local/bin/cistern && chmod +x /usr/local/bin/cistern' < "$WORK/cistern"
 }
 
@@ -65,7 +50,6 @@ aws() {
     -e AWS_DEFAULT_REGION=us-east-1 -e AWS_PAGER= "$AWS_CLI_IMAGE" --endpoint-url http://minio:9000 "$@"
 }
 
-# start_minio PROBE_CONTAINER: chờ MinIO nghe cổng 9000, kiểm từ container có bash.
 start_minio() {
   docker rm -f -v "$ID-minio" >/dev/null 2>&1 || true
   step "start $MINIO_IMAGE"
@@ -80,13 +64,11 @@ start_minio() {
   fail "minio did not start"
 }
 
-# start_mysql IMAGE CLI: MySQL hoặc MariaDB, cistern chạy bên trong container.
 start_mysql() {
   docker rm -f -v "$ID-mysql" >/dev/null 2>&1 || true
   step "start $1"
   docker run -d --name "$ID-mysql" --network "$ID" -e MYSQL_ROOT_PASSWORD=e2e-secret -e MARIADB_ROOT_PASSWORD=e2e-secret "$1" >/dev/null
   for _ in $(seq 1 90); do
-    # TCP 127.0.0.1: server tạm của bước init chỉ nghe socket
     docker exec -e MYSQL_PWD=e2e-secret "$ID-mysql" "$2" -h127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1 && break
     sleep 1
   done
@@ -117,7 +99,6 @@ run_s3() {
   SIZE=$(aws s3api head-object --bucket backups --key "$BIG" --query ContentLength --output text)
   echo "orders.dump: $SIZE bytes, ETag $ETAG"
   [[ "$ETAG" == *-* ]] || fail "expected a multipart upload (ETag with -N)"
-  # MinIO bỏ KeyCount khi bằng 0, nên đếm Contents.
   LOCKS=$(aws s3api list-objects-v2 --bucket backups --prefix cistern/locks/ --query 'length(Contents || `[]`)' --output text)
   [ "$LOCKS" = 0 ] || fail "job lock not released ($LOCKS objects under locks/)"
   echo "job lock released (only a delete marker remains)"

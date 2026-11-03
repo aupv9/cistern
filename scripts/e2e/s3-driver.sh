@@ -1,5 +1,3 @@
-# Chạy trong container AWS CLI (xem run_s3_driver trong scripts/e2e-local.sh): nguồn là bucket "data"
-# trên MinIO, repository là bucket "backups" có Object Lock.
 set -euo pipefail
 step() { echo; echo "==> $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -39,7 +37,7 @@ repositories:
     object_lock: { mode: GOVERNANCE, days: 1 }
 encryption:
   recipients_file: recipient.txt
-  identity_file: identity.txt     # cần để đọc index của lần trước (incremental)
+  identity_file: identity.txt
 jobs:
   - name: site
     driver: s3

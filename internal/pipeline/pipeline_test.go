@@ -69,7 +69,6 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// Bản lưu gzip+age phải giải được bằng công cụ chuẩn: age -d | gunzip.
 func TestManualRecovery(t *testing.T) {
 	id, _ := crypt.GenerateIdentity()
 	plain := []byte("SELECT 1;\n")
@@ -92,7 +91,6 @@ func TestDetectsCorruption(t *testing.T) {
 	plain := bytes.Repeat([]byte("x"), 5000)
 	stored, res := write(t, plain, Options{Compression: CompressionNone})
 
-	// Sửa 1 byte: cả VerifyStored và Reader phải báo lỗi.
 	bad := append([]byte{}, stored...)
 	bad[100] ^= 1
 	if err := VerifyStored(bytes.NewReader(bad), res); !errors.Is(err, ErrChecksum) {
@@ -103,14 +101,12 @@ func TestDetectsCorruption(t *testing.T) {
 		t.Fatalf("Reader: %v", err)
 	}
 
-	// Đọc dở rồi Close vẫn phải kiểm checksum.
 	r, _ = NewReader(bytes.NewReader(bad), ReadOptions{Compression: CompressionNone, Expect: res})
 	r.Read(make([]byte, 10))
 	if err := r.Close(); !errors.Is(err, ErrChecksum) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Thừa byte cuối.
 	if err := VerifyStored(bytes.NewReader(append(stored, 0)), res); !errors.Is(err, ErrChecksum) {
 		t.Fatalf("trailing: %v", err)
 	}

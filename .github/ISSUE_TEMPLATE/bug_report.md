@@ -10,8 +10,6 @@ labels: bug
 
 **How to reproduce**
 
-<!-- Minimal configuration (remove secrets), commands, and output. -->
-
 **Environment**
 
 - Cistern version (`cistern version`):
@@ -19,4 +17,3 @@ labels: bug
 - Repository type (local / S3, provider):
 - OS / deployment (daemon, CronJob, …):
 
-<!-- Security issues: please do not file them here; see SECURITY.md. -->

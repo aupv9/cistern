@@ -1,5 +1,3 @@
-// Package pipeline: chiều ghi SHA-256(plain) → gzip → age → SHA-256(stored);
-// chiều đọc kiểm lại cả hai checksum. Dạng stream, không giữ cả artifact trong bộ nhớ.
 package pipeline
 
 import (
@@ -21,12 +19,11 @@ const (
 	EncryptionNone  = "none"
 )
 
-// ErrChecksum được trả về khi dữ liệu đọc ra không khớp manifest.
 var ErrChecksum = errors.New("checksum mismatch")
 
 type Options struct {
-	Compression string // gzip | none
-	Level       int    // gzip 1–9
+	Compression string
+	Level       int
 	Recipients  []*crypt.Recipient
 }
 
@@ -61,7 +58,6 @@ func (c *counter) Write(p []byte) (int, error) {
 
 func (c *counter) sum() string { return hex.EncodeToString(c.h.Sum(nil)) }
 
-// Writer nhận dữ liệu gốc từ driver và ghi dữ liệu đã xử lý vào dst.
 type Writer struct {
 	plain, stored *counter
 	gz            *gzip.Writer
@@ -109,7 +105,6 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Close đẩy phần còn lại của gzip và khối cuối của age; không đóng dst.
 func (w *Writer) Close() error {
 	if w.closed {
 		return w.err
@@ -133,7 +128,6 @@ func (w *Writer) Close() error {
 	return nil
 }
 
-// Result chỉ có nghĩa sau khi Close thành công.
 func (w *Writer) Result() Result {
 	return Result{
 		PlainSize:    w.plain.n,
@@ -165,7 +159,6 @@ func (h *hashReader) Read(p []byte) (int, error) {
 
 func (h *hashReader) sum() string { return hex.EncodeToString(h.h.Sum(nil)) }
 
-// Reader trả dữ liệu gốc; lỗi checksum được trả thay cho io.EOF khi đọc hết stream.
 type Reader struct {
 	src           io.Reader
 	stored, plain *hashReader
@@ -229,7 +222,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 }
 
 func (r *Reader) verify() error {
-	// Phần dư sau cuối stream gzip/age (nếu có) vẫn phải tính vào checksum lưu trữ.
+
 	if _, err := io.Copy(io.Discard, r.stored); err != nil {
 		return err
 	}
@@ -243,7 +236,6 @@ func (r *Reader) verify() error {
 	return nil
 }
 
-// Close đọc nốt phần còn lại để kiểm checksum nếu người dùng dừng giữa chừng.
 func (r *Reader) Close() error {
 	if !r.done && r.err == nil {
 		if _, err := io.Copy(io.Discard, r); err != nil {
@@ -256,7 +248,6 @@ func (r *Reader) Close() error {
 	return r.err
 }
 
-// VerifyStored chỉ kiểm kích thước và SHA-256 của bản lưu (khi không có private key).
 func VerifyStored(src io.Reader, e Result) error {
 	h := &hashReader{r: src, h: sha256.New()}
 	if _, err := io.Copy(io.Discard, h); err != nil {

@@ -1,5 +1,3 @@
-// Package config: parser tập con YAML, thay ${VAR} và ${VAR:-mặc định} (trừ trong hooks),
-// áp mặc định và kiểm tra cấu hình. Khóa lạ bị từ chối.
 package config
 
 import (
@@ -19,7 +17,6 @@ import (
 
 const DefaultPath = "/etc/cistern/cistern.yaml"
 
-// Path chọn file cấu hình: -c, rồi $CISTERN_CONFIG, rồi /etc/cistern/cistern.yaml.
 func Path(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -40,13 +37,12 @@ type Config struct {
 	Defaults     Defaults               `yaml:"defaults"`
 	Jobs         []*Job                 `yaml:"jobs"`
 
-	// Điền khi nạp.
 	Path       string             `yaml:"-"`
 	Recipients []*crypt.Recipient `yaml:"-"`
 }
 
 type Repository struct {
-	Type            string      `yaml:"type"` // local | s3
+	Type            string      `yaml:"type"`
 	Path            string      `yaml:"path"`
 	Endpoint        string      `yaml:"endpoint"`
 	Region          string      `yaml:"region"`
@@ -63,8 +59,8 @@ type Repository struct {
 }
 
 type ObjectLock struct {
-	Mode string `yaml:"mode"` // GOVERNANCE | COMPLIANCE
-	Days int    `yaml:"days"` // thời gian khóa mỗi artifact/manifest kể từ lúc ghi
+	Mode string `yaml:"mode"`
+	Days int    `yaml:"days"`
 }
 
 type Encryption struct {
@@ -75,7 +71,7 @@ type Encryption struct {
 }
 
 type Compression struct {
-	Level *int `yaml:"level"` // gzip 1–9; 0 = không nén; mặc định 6
+	Level *int `yaml:"level"`
 }
 
 type Metrics struct {
@@ -90,9 +86,9 @@ type Notify struct {
 
 type Webhook struct {
 	URL    string   `yaml:"url"`
-	Format string   `yaml:"format"` // slack | teams | telegram | json
+	Format string   `yaml:"format"`
 	ChatID string   `yaml:"chat_id"`
-	On     []string `yaml:"on"` // failure | success
+	On     []string `yaml:"on"`
 }
 
 type Scheduler struct {
@@ -150,19 +146,17 @@ func (r *Retention) validate() error {
 	return nil
 }
 
-// Location là múi giờ dùng cho lịch và retention (mặc định giờ máy).
 func (c *Config) Location() *time.Location {
 	if c.Scheduler.Timezone == "" {
 		return time.Local
 	}
 	loc, err := time.LoadLocation(c.Scheduler.Timezone)
 	if err != nil {
-		return time.Local // đã kiểm khi nạp
+		return time.Local
 	}
 	return loc
 }
 
-// Job tìm job theo tên.
 func (c *Config) Job(name string) (*Job, error) {
 	for _, j := range c.Jobs {
 		if j.Name == name {
@@ -172,10 +166,8 @@ func (c *Config) Job(name string) (*Job, error) {
 	return nil, fmt.Errorf("job %q not found in %s", name, c.Path)
 }
 
-// CompressionLevel trả về mức gzip; 0 nghĩa là không nén.
 func (c *Config) CompressionLevel() int { return *c.Compression.Level }
 
-// Resolve trả về đường dẫn tương đối theo thư mục của file cấu hình.
 func (c *Config) Resolve(p string) string {
 	if p == "" || filepath.IsAbs(p) {
 		return p
@@ -183,7 +175,6 @@ func (c *Config) Resolve(p string) string {
 	return filepath.Join(filepath.Dir(c.Path), p)
 }
 
-// Load đọc, thay biến môi trường, giải mã và kiểm tra cấu hình.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -200,7 +191,6 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Parse giải mã và kiểm tra cấu hình (không đọc file recipient).
 func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	root, err := parseYAML(string(data))
 	if err != nil {
@@ -407,7 +397,6 @@ func (c *Config) loadRecipients() error {
 	return nil
 }
 
-// LoadIdentities đọc private key từ encryption.identity_file (chỉ cần cho verify đầy đủ và restore).
 func (c *Config) LoadIdentities() ([]*crypt.Identity, error) {
 	f := c.Encryption.IdentityFile
 	if f == "" {

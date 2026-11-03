@@ -1,7 +1,3 @@
-// Package metrics: registry Prometheus tối giản, đẩy Pushgateway, ghi textfile cho node_exporter.
-//
-// Mọi metric theo job mang label `cistern_job` (không dùng `job` vì trùng label của
-// Prometheus/Pushgateway).
 package metrics
 
 import (
@@ -58,7 +54,6 @@ var defs = map[string]def{
 	BuildInfo:          {"gauge", "Cistern build information."},
 }
 
-// Labels là cặp tên/giá trị, giữ thứ tự khi in.
 type Labels [][2]string
 
 func Job(name string) Labels { return Labels{{JobLabel, name}} }
@@ -94,7 +89,7 @@ type sample struct {
 
 type Registry struct {
 	mu      sync.Mutex
-	samples map[string]map[string]*sample // tên → chuỗi label → mẫu
+	samples map[string]map[string]*sample
 }
 
 func NewRegistry() *Registry { return &Registry{samples: map[string]map[string]*sample{}} }
@@ -129,7 +124,6 @@ func (r *Registry) Add(name string, l Labels, v float64) {
 	r.entry(name, l).value += v
 }
 
-// Get trả về giá trị và có tồn tại hay không.
 func (r *Registry) Get(name string, l Labels) (float64, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -139,7 +133,6 @@ func (r *Registry) Get(name string, l Labels) (float64, bool) {
 	return 0, false
 }
 
-// WriteText in theo Prometheus text format 0.0.4. job != "" chỉ in mẫu của job đó.
 func (r *Registry) WriteText(w io.Writer, job string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -171,7 +164,6 @@ func (r *Registry) WriteText(w io.Writer, job string) error {
 
 func formatValue(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
-// Handler phục vụ /metrics.
 func (r *Registry) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -187,8 +179,6 @@ var httpClient = &http.Client{
 	},
 }
 
-// Push gửi mẫu của job lên Pushgateway bằng POST vào nhóm job=cistern, instance=<job>.
-// POST chỉ thay metric cùng tên, nên thời điểm thành công cũ được giữ khi lần sau lỗi.
 func (r *Registry) Push(ctx context.Context, gatewayURL, job string) error {
 	var body bytes.Buffer
 	if err := r.WriteText(&body, job); err != nil {
@@ -215,11 +205,9 @@ func (r *Registry) Push(ctx context.Context, gatewayURL, job string) error {
 	return nil
 }
 
-// WriteTextfile ghi <dir>/cistern_<job>.prom (ghi file tạm rồi rename). Mẫu đã có trong file mà
-// lần này không đặt lại (vd. thời điểm thành công cũ khi lần này lỗi) được giữ nguyên.
 func (r *Registry) WriteTextfile(dir, job string) error {
 	path := filepath.Join(dir, "cistern_"+job+".prom")
-	merged := map[string]map[string]string{} // tên → "tên{labels}" → dòng
+	merged := map[string]map[string]string{}
 	if old, err := os.ReadFile(path); err == nil {
 		for _, line := range strings.Split(string(old), "\n") {
 			if line == "" || strings.HasPrefix(line, "#") {

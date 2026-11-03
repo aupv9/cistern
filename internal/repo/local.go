@@ -14,8 +14,6 @@ import (
 
 const tmpPrefix = ".cistern-tmp-"
 
-// Local lưu object thành file dưới Root. Ghi vào file tạm cùng thư mục, fsync, rồi rename,
-// nên một key hoặc không tồn tại hoặc có đủ nội dung.
 type Local struct{ Root string }
 
 func NewLocal(root string) (*Local, error) {
@@ -88,7 +86,7 @@ func (l *Local) PutIfAbsent(ctx context.Context, key string, data []byte) error 
 		return err
 	}
 	defer os.Remove(tmp)
-	// link(2) thất bại nếu đích đã tồn tại: tạo nguyên tử, không ghi đè.
+
 	if err := os.Link(tmp, p); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%s: %w", key, ErrExist)
@@ -140,7 +138,7 @@ func (l *Local) Delete(_ context.Context, key string) error {
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	// Dọn thư mục rỗng phía trên, không vượt quá Root.
+
 	for dir := filepath.Dir(p); dir != l.Root && strings.HasPrefix(dir, l.Root); dir = filepath.Dir(dir) {
 		if os.Remove(dir) != nil {
 			break
@@ -155,7 +153,7 @@ func syncDir(dir string) error {
 		return err
 	}
 	defer d.Close()
-	_ = d.Sync() // một số hệ thống file không hỗ trợ fsync thư mục
+	_ = d.Sync()
 	return nil
 }
 

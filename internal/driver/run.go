@@ -12,18 +12,16 @@ import (
 	"time"
 )
 
-// Command là một lệnh ngoài. Mật khẩu đi qua Env (hoặc file tạm 0600), không bao giờ qua Args.
 type Command struct {
 	Name   string
 	Args   []string
-	Env    []string // KEY=VALUE, thêm vào môi trường hiện tại
+	Env    []string
 	Stdin  io.Reader
 	Stdout io.Writer
 }
 
 func (c Command) String() string { return c.Name + " " + strings.Join(c.Args, " ") }
 
-// Runner cho phép driver thay lệnh thật bằng bản giả trong test.
 type Runner func(ctx context.Context, c Command) error
 
 const (
@@ -31,8 +29,6 @@ const (
 	killDelay  = 30 * time.Second
 )
 
-// Run chạy lệnh tới khi xong hoặc ctx bị hủy. Khi hủy: SIGTERM cả process group, sau 30 giây SIGKILL.
-// Lỗi kèm 4 KiB stderr cuối. Lỗi ghi Stdout (vd. upload hỏng) hủy lệnh và được trả về ưu tiên.
 func Run(parent context.Context, c Command) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -67,7 +63,6 @@ func Run(parent context.Context, c Command) error {
 	return fmt.Errorf("%s: %w", c.Name, err)
 }
 
-// Output chạy lệnh và trả về stdout (đã bỏ khoảng trắng hai đầu).
 func Output(ctx context.Context, run Runner, c Command) (string, error) {
 	var buf bytes.Buffer
 	c.Stdout = &buf

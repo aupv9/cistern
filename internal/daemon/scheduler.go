@@ -10,15 +10,13 @@ import (
 	"cistern/internal/cron"
 )
 
-// Task là một việc chạy theo lịch: backup hoặc verify của một job.
 type Task struct {
 	Job      string
-	Op       string // backup | verify
+	Op       string
 	Expr     string
 	Schedule cron.Schedule
 }
 
-// Runner chạy một task; lỗi đã được engine ghi metrics và gửi webhook, scheduler chỉ ghi log.
 type Runner func(ctx context.Context, job, op string) error
 
 type TaskStatus struct {
@@ -64,8 +62,6 @@ func NewScheduler(tasks []Task, run Runner, loc *time.Location, log *slog.Logger
 	return s
 }
 
-// Loop chạy tới khi ctx bị hủy. Job được chạy với jobCtx để còn hoàn tất trong thời gian grace.
-// Lượt bị lỡ khi daemon không chạy không được chạy bù.
 func (s *Scheduler) Loop(ctx, jobCtx context.Context) {
 	now := s.now().In(s.loc)
 	s.mu.Lock()
@@ -87,7 +83,6 @@ func (s *Scheduler) Loop(ctx, jobCtx context.Context) {
 	}
 }
 
-// dispatch khởi chạy các task đến hạn và trả về thời gian chờ tới task kế tiếp.
 func (s *Scheduler) dispatch(jobCtx context.Context) time.Duration {
 	now := s.now().In(s.loc)
 	s.mu.Lock()
@@ -138,8 +133,6 @@ func (s *Scheduler) start(jobCtx context.Context, t *task) {
 	}()
 }
 
-// Wait chờ các job đang chạy tối đa grace; quá hạn thì gọi cancel rồi chờ chúng dừng.
-// Trả về true nếu mọi job xong trong thời gian grace.
 func (s *Scheduler) Wait(grace time.Duration, cancel context.CancelFunc) bool {
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()

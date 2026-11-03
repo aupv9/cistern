@@ -8,7 +8,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.24"
-          # No third-party modules, so there is no go.sum to key the build cache on.
           cache-dependency-path: go.mod
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
@@ -16,7 +15,6 @@ jobs:
       - run: go test -race ./...
       - run: go build ./cmd/cistern
 
-  # End-to-end tests against real systems in Docker (scripts/e2e-local.sh), one job per target.
   e2e:
     name: e2e (${{ matrix.target }})
     needs: test

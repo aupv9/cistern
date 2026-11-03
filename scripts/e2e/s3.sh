@@ -1,4 +1,3 @@
-# Chạy bên trong container postgres theo từng pha (xem run_s3 trong scripts/e2e-local.sh).
 set -euo pipefail
 step() { echo; echo "==> $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }

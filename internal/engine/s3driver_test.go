@@ -110,7 +110,6 @@ func TestS3DriverIncremental(t *testing.T) {
 		t.Fatalf("backup 1: extra=%v artifacts=%d deps=%v", m1.Source.Extra, len(m1.Artifacts), m1.DependsOn)
 	}
 
-	// Sửa một object, thêm một, xóa một.
 	put(t, src, "site/a.txt", "version 2", "text/plain")
 	put(t, src, "site/new.txt", "added", "")
 	src.DeleteObject(ctx, "site/dir/b c.txt")
@@ -119,7 +118,7 @@ func TestS3DriverIncremental(t *testing.T) {
 		!reflect.DeepEqual(m2.DependsOn, []string{m1.ID}) || !strings.HasPrefix(m2.Source.Extra["mode"], "incremental") {
 		t.Fatalf("backup 2: extra=%v artifacts=%d deps=%v", m2.Source.Extra, len(m2.Artifacts), m2.DependsOn)
 	}
-	// Không đổi gì: chỉ ghi index; dữ liệu trỏ thẳng tới snapshot đang giữ nó (không qua m2 khi không cần).
+
 	m3 := backupS3(t, e, c)
 	if m3.Source.Extra["copied"] != "0" || len(m3.Artifacts) != 1 || !reflect.DeepEqual(m3.DependsOn, []string{m1.ID, m2.ID}) {
 		t.Fatalf("backup 3: extra=%v artifacts=%d deps=%v", m3.Source.Extra, len(m3.Artifacts), m3.DependsOn)
@@ -138,7 +137,6 @@ func TestS3DriverIncremental(t *testing.T) {
 		return string(b)
 	}
 
-	// Restore bản mới nhất sang prefix khác: đúng trạng thái hiện tại.
 	if _, err := e.Restore(ctx, "site", "latest", map[string]string{"restore_prefix": "restored/"}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +152,6 @@ func TestS3DriverIncremental(t *testing.T) {
 		t.Errorf("content type: %q", v.ContentType)
 	}
 
-	// Restore bản đầu: object đã xóa quay lại, a.txt là phiên bản cũ.
 	if _, err := e.Restore(ctx, "site", m1.ID, map[string]string{"restore_prefix": "v1/"}); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +159,6 @@ func TestS3DriverIncremental(t *testing.T) {
 		t.Errorf("v1: a=%q b=%q new=%q", read("v1/a.txt"), read("v1/dir/b c.txt"), read("v1/new.txt"))
 	}
 
-	// Ghi đè bị từ chối nếu không có overwrite=true.
 	if _, err := e.Restore(ctx, "site", m1.ID, nil); err == nil || !strings.Contains(err.Error(), "already exist") {
 		t.Fatalf("overwrite not refused: %v", err)
 	}
@@ -173,7 +169,6 @@ func TestS3DriverIncremental(t *testing.T) {
 		t.Errorf("only+overwrite: a=%q new=%q", read("site/a.txt"), read("site/new.txt"))
 	}
 
-	// Prune (last: 1) phải giữ m1, m2 vì m3 phụ thuộc chúng.
 	rep, err := e.Prune(ctx, "site", false)
 	if err != nil || rep.Removed != 0 {
 		t.Fatalf("prune: %+v %v", rep, err)
@@ -192,7 +187,7 @@ func TestS3DriverObjectChangedDuringCopy(t *testing.T) {
 	put(t, src, "site/a.txt", "one", "")
 	put(t, src, "site/b.txt", "two", "")
 	var once sync.Once
-	// Object bị sửa sau khi liệt kê, ngay trước khi tải về.
+
 	srv.BeforeGet = func(key string) {
 		if key == "site/b.txt" {
 			once.Do(func() { src.Upload(context.Background(), "site/b.txt", strings.NewReader("changed"), s3.PutOptions{}) })

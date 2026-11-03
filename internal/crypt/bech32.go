@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// Bech32 (BIP-173) như age dùng: không giới hạn độ dài, chấp nhận chữ thường hoặc chữ hoa toàn bộ.
-
 const bech32Charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 var bech32Gen = [5]uint32{0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3}
@@ -64,7 +62,6 @@ func convertBits(data []byte, from, to uint, pad bool) ([]byte, error) {
 	return out, nil
 }
 
-// bech32Encode mã hóa với hrp chữ thường.
 func bech32Encode(hrp string, data []byte) (string, error) {
 	values, err := convertBits(data, 8, 5, true)
 	if err != nil {
@@ -84,7 +81,6 @@ func bech32Encode(hrp string, data []byte) (string, error) {
 	return sb.String(), nil
 }
 
-// bech32Decode trả về hrp (chữ thường) và dữ liệu 8-bit.
 func bech32Decode(s string) (string, []byte, error) {
 	if strings.ToLower(s) != s && strings.ToUpper(s) != s {
 		return "", nil, errors.New("mixed case")

@@ -126,7 +126,7 @@ func TestParseDefaultsAndEnv(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	cases := map[string]string{
-		"unset var":        minimal, // PGPORT không có
+		"unset var":        minimal,
 		"unknown key":      strings.Replace(minimal, "driver: postgres", "driver: postgres\n    parms: {}", 1),
 		"bad job name":     strings.Replace(minimal, "name: db", "name: DB", 1),
 		"unknown repo":     strings.Replace(minimal, "driver: postgres", "driver: postgres\n    repository: nope", 1),
@@ -173,13 +173,11 @@ func TestLoadRecipientsAndExample(t *testing.T) {
 		t.Fatalf("recipients: %v", cfg.Recipients)
 	}
 
-	// Không recipient và không allow_plaintext → lỗi.
 	os.WriteFile(cfgPath, []byte(strings.Replace(minimal, "allow_plaintext: true", "recipients: []", 1)), 0o600)
 	if _, err := Load(cfgPath); err == nil {
 		t.Fatal("expected error without recipients")
 	}
 
-	// File ví dụ trong repo phải nạp được.
 	for k, v := range map[string]string{
 		"CISTERN_RECIPIENT": id.Recipient().String(), "S3_ACCESS_KEY_ID": "a", "S3_SECRET_ACCESS_KEY": "b",
 		"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x", "PGHOST": "db", "PGPASSWORD": "pw", "MYSQL_PASSWORD": "pw",

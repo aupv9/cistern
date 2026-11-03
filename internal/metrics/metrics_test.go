@@ -66,7 +66,6 @@ func TestPush(t *testing.T) {
 	}
 }
 
-// Lần sau lỗi không được xóa thời điểm thành công cũ trong textfile.
 func TestTextfileKeepsPreviousSuccess(t *testing.T) {
 	dir := t.TempDir()
 	ok := NewRegistry()

@@ -22,7 +22,6 @@ import (
 	"cistern/internal/manifest"
 )
 
-// fakeDriver ghi các artifact theo params và lưu nội dung khi restore.
 type fakeDriver struct{ p driver.Params }
 
 var (
@@ -51,9 +50,9 @@ func (f *fakeDriver) Backup(ctx context.Context, s driver.Sink) (driver.Info, er
 			blockCh <- struct{}{}
 			<-blockCh
 		}
-		data := bytes.Repeat([]byte(name+":"), 50000) // ~ vài trăm KiB, nhiều khối age
+		data := bytes.Repeat([]byte(name+":"), 50000)
 		if name == f.p["big"] {
-			// Dữ liệu ngẫu nhiên không nén được, để bản lưu vượt một part S3.
+
 			n, _ := strconv.Atoi(f.p["big_size"])
 			noise := make([]byte, n)
 			rand.Read(noise)
@@ -140,7 +139,7 @@ func TestBackupVerifyRestore(t *testing.T) {
 			t.Fatal("lock not released")
 		}
 
-		time.Sleep(1100 * time.Millisecond) // ID theo giây
+		time.Sleep(1100 * time.Millisecond)
 		if _, err := e.Backup(ctx, "app"); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +163,6 @@ func TestBackupVerifyRestore(t *testing.T) {
 			t.Fatalf("restored %d bytes", len(got))
 		}
 
-		// Sửa 1 byte trong bản lưu → verify và restore đều báo lỗi.
 		art := filepath.Join(repoDir, "app", m.ID, filepath.FromSlash(m.Artifacts[1].Path))
 		b, _ := os.ReadFile(art)
 		b[len(b)/2] ^= 1
@@ -222,13 +220,12 @@ func TestLock(t *testing.T) {
 	blockCh = make(chan struct{})
 	errc := make(chan error, 1)
 	go func() { _, err := e.Backup(context.Background(), "app"); errc <- err }()
-	<-blockCh // backup đầu đang giữ khóa
+	<-blockCh
 
-	// Lần chạy thứ hai bị chặn ở khóa, trước khi driver chạy.
 	if _, err := e.Backup(context.Background(), "app"); err == nil || !strings.Contains(err.Error(), "locked") {
 		t.Fatalf("second backup: %v", err)
 	}
-	for i := 0; i < 3; i++ { // 3 artifact, mỗi cái chặn một lần
+	for i := 0; i < 3; i++ {
 		blockCh <- struct{}{}
 		if i < 2 {
 			<-blockCh
@@ -238,7 +235,6 @@ func TestLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Khóa hết hạn bị gỡ.
 	stale, _ := json.Marshal(manifest.Lock{Host: "dead", PID: 1, Op: "backup", Expires: time.Now().Add(-time.Hour)})
 	os.MkdirAll(filepath.Join(repoDir, "locks"), 0o700)
 	os.WriteFile(filepath.Join(repoDir, "locks", "app.lock"), stale, 0o600)

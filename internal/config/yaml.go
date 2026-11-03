@@ -6,12 +6,6 @@ import (
 	"strings"
 )
 
-// Parser tập con YAML đủ cho file cấu hình Cistern:
-//   - mapping và sequence dạng khối theo thụt lề (chỉ dấu cách), kể cả "- key: v" gọn
-//   - flow [a, b] và {k: v} (lồng nhau được)
-//   - scalar thường, '...' và "..."; chú thích #
-// Không hỗ trợ: chuỗi nhiều dòng (| >), anchor/alias (& *), tag (!), nhiều document.
-
 type nodeKind int
 
 const (
@@ -22,11 +16,11 @@ const (
 
 type node struct {
 	kind   nodeKind
-	value  string // scalar
+	value  string
 	quoted bool
-	keys   []string // mapping, theo thứ tự
+	keys   []string
 	m      map[string]*node
-	items  []*node // sequence
+	items  []*node
 	line   int
 }
 
@@ -47,7 +41,7 @@ func (n *node) isNull() bool {
 type line struct {
 	num    int
 	indent int
-	text   string // đã bỏ thụt lề, chú thích và khoảng trắng cuối
+	text   string
 }
 
 type yamlError struct {
@@ -100,7 +94,6 @@ func parseYAML(src string) (*node, error) {
 	return n, nil
 }
 
-// stripComment bỏ "# ..." nằm ngoài dấu nháy, ở đầu dòng hoặc sau khoảng trắng.
 func stripComment(s string) string {
 	var q byte
 	for i := 0; i < len(s); i++ {
@@ -144,7 +137,7 @@ func (p *parser) parseBlock(indent int) (*node, error) {
 	if _, _, ok := splitKey(l.text); ok {
 		return p.parseMapping(indent)
 	}
-	// Một scalar đứng riêng một dòng (giá trị khối của key phía trên).
+
 	p.pos++
 	return parseInline(l.text, l.num)
 }
@@ -174,7 +167,7 @@ func (p *parser) parseSequence(indent int) (*node, error) {
 				item = &node{kind: scalarNode, line: l.num}
 			}
 		case isSeqItem(rest) || isBlockKey(rest):
-			// "- key: v" hoặc "- - x": coi phần sau "- " như một dòng thụt lề sâu hơn.
+
 			off := len(l.text) - len(rest)
 			p.lines[p.pos] = line{num: l.num, indent: indent + off, text: rest}
 			item, err = p.parseBlock(indent + off)
@@ -242,7 +235,6 @@ func (p *parser) parseMapping(indent int) (*node, error) {
 	return m, nil
 }
 
-// splitKey tách "key: value" / "key:" ngoài dấu nháy và ngoặc flow.
 func splitKey(text string) (key, val string, ok bool) {
 	var q byte
 	depth := 0

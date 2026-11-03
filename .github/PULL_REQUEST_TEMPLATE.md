@@ -1,7 +1,5 @@
 ## What and why
 
-<!-- What does this change do, and what problem does it solve? Link related issues. -->
-
 ## How it was tested
 
 - [ ] `make lint race`

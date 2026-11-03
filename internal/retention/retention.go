@@ -1,9 +1,3 @@
-// Package retention: thuật toán GFS trên finished_at theo múi giờ của scheduler;
-// giữ thêm mọi snapshot nằm trong depends_on của bản được giữ.
-//
-// Mỗi quy tắc duyệt snapshot từ mới đến cũ và giữ bản mới nhất của mỗi khoảng thời gian
-// (giờ, ngày, tuần ISO, tháng, năm) cho đến khi đủ số lượng. "last" giữ N bản mới nhất.
-// Một snapshot được giữ nếu ít nhất một quy tắc giữ nó.
 package retention
 
 import (
@@ -29,7 +23,7 @@ type Snapshot struct {
 type Decision struct {
 	Snapshot
 	Keep    bool
-	Reasons []string // last, hourly, daily, weekly, monthly, yearly, depends_on
+	Reasons []string
 }
 
 type rule struct {
@@ -38,7 +32,6 @@ type rule struct {
 	bucket func(time.Time) string
 }
 
-// Apply trả về quyết định cho từng snapshot, mới nhất trước.
 func Apply(p Policy, snaps []Snapshot, loc *time.Location) []Decision {
 	if loc == nil {
 		loc = time.Local
@@ -79,7 +72,6 @@ func Apply(p Policy, snaps []Snapshot, loc *time.Location) []Decision {
 		}
 	}
 
-	// Giữ chuỗi phụ thuộc (incremental) của mọi bản được giữ.
 	idx := map[string]int{}
 	for i, d := range ds {
 		idx[d.ID] = i

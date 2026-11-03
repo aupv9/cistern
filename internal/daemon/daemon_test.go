@@ -127,7 +127,7 @@ func TestRunServesStatusAndWaitsForJobs(t *testing.T) {
 			case started <- struct{}{}:
 			default:
 			}
-			time.Sleep(300 * time.Millisecond) // vẫn chạy khi nhận tín hiệu dừng
+			time.Sleep(300 * time.Millisecond)
 			select {
 			case <-finished:
 			default:
@@ -155,7 +155,7 @@ func TestRunServesStatusAndWaitsForJobs(t *testing.T) {
 		t.Fatalf("status: %+v", st)
 	}
 
-	cancel() // như SIGTERM
+	cancel()
 	if err := <-errc; err != nil {
 		t.Fatalf("Run: %v", err)
 	}

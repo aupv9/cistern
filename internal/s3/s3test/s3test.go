@@ -1,9 +1,3 @@
-// Package s3test là server S3 giả lập trong bộ nhớ, dùng trong test. Chỉ hỗ trợ path-style.
-//
-// Server kiểm chặt như S3 thật ở những điểm client dễ sai: chữ ký SigV4 (tính lại từ yêu cầu nhận
-// được), x-amz-content-sha256, Content-MD5, Content-MD5 bắt buộc khi có Object Lock, kích thước
-// part tối thiểu, If-None-Match. Bucket có Object Lock thì có versioning: DELETE tạo delete marker,
-// bản đã khóa không xóa được trước hạn.
 package s3test
 
 import (
@@ -54,12 +48,11 @@ type upload struct {
 	retainUntil time.Time
 }
 
-// Fault được trả cho yêu cầu khớp đầu tiên rồi bị gỡ khỏi hàng đợi.
 type Fault struct {
-	Method string // rỗng = mọi method
-	Query  string // tham số phải có trong query, vd. "partNumber"; rỗng = không kiểm
+	Method string
+	Query  string
 	Status int
-	// AfterProcessing: xử lý yêu cầu bình thường rồi vẫn trả Status (mô phỏng mất phản hồi).
+
 	AfterProcessing bool
 }
 
@@ -67,9 +60,9 @@ type Server struct {
 	*httptest.Server
 	ObjectLock bool
 	MaxKeys    int
-	// CompleteError: CompleteMultipartUpload trả 200 kèm <Error> trong thân.
+
 	CompleteError bool
-	// BeforeGet được gọi (không giữ khóa) trước khi phục vụ GET object, vd. để sửa object giữa chừng.
+
 	BeforeGet func(key string)
 
 	mu       sync.Mutex
@@ -98,7 +91,6 @@ func (s *Server) Requests() []string {
 	return append([]string(nil), s.requests...)
 }
 
-// Current trả về bản hiện hành (không phải delete marker) của key.
 func (s *Server) Current(key string) (*Version, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -113,14 +105,12 @@ func (s *Server) current(key string) (*Version, bool) {
 	return vs[len(vs)-1], true
 }
 
-// Versions trả về mọi phiên bản của key, cũ trước.
 func (s *Server) Versions(key string) []*Version {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]*Version(nil), s.objects[key]...)
 }
 
-// Keys trả về các key có bản hiện hành.
 func (s *Server) Keys() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,7 +186,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			s.BeforeGet(key)
 		}
 	}
-	// Như S3: PUT phải có Content-Length (không nhận chunked transfer encoding).
+
 	if r.Method == http.MethodPut && r.ContentLength < 0 {
 		writeError(w, http.StatusLengthRequired, "MissingContentLength", "You must provide the Content-Length HTTP header.")
 		return
@@ -483,7 +473,6 @@ func (s *Server) list(w http.ResponseWriter, q map[string][]string) {
 	writeXML(w, res)
 }
 
-// Bytes tiện cho test: nội dung bản hiện hành.
 func (s *Server) Bytes(key string) []byte {
 	if v, ok := s.Current(key); ok {
 		return bytes.Clone(v.Data)

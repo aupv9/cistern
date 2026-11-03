@@ -1,9 +1,8 @@
-# Chạy bên trong container MySQL hoặc MariaDB (xem scripts/e2e-local.sh). CLI=mysql | mariadb.
 set -euo pipefail
 step() { echo; echo "==> $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 CLI=${CLI:-mysql}
-export MYSQL_PWD=e2e-secret DB_PASSWORD=e2e-secret   # chỉ cho script kiểm thử; cistern dùng file option 0600
+export MYSQL_PWD=e2e-secret DB_PASSWORD=e2e-secret
 export CISTERN_CONFIG=/e2e/cistern.yaml
 sqlc() { "$CLI" -h127.0.0.1 -uroot --default-character-set=utf8mb4 "$@"; }
 q() { sqlc -N -B -e "$1"; }
@@ -83,7 +82,6 @@ echo "routines/triggers/events/views in orders_restored: $R"
 [ "$(q "SELECT orders_restored.total_amount()")" = "$(q "SELECT orders.total_amount()")" ] || fail "function result differs"
 q "CALL orders_restored.add_order('mới')"
 [ "$(q "SELECT COUNT(*) FROM orders_restored.audit")" = 1 ] || fail "trigger did not fire in restored database"
-# View phải đọc bảng của database đã restore, không phải database gốc.
 q "DELETE FROM orders.orders WHERE amount > 100000"
 [ "$(q "SELECT COUNT(*) FROM orders_restored.big_orders")" = "$VIEW" ] || fail "restored view still reads the original database"
 echo "checksums, collation, utf8mb4, routines, trigger, event and view all match"

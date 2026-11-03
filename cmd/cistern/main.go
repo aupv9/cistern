@@ -1,5 +1,3 @@
-// Command cistern: backup, restore, list, verify, prune, check, daemon, drivers, keygen, version.
-// Mã thoát: 0 thành công, 1 thao tác lỗi, 2 sai cú pháp.
 package main
 
 import (
@@ -27,7 +25,7 @@ import (
 	"cistern/internal/engine"
 )
 
-var version = "dev" // ghi đè bằng -ldflags "-X main.version=..."
+var version = "dev"
 
 const (
 	exitOK    = 0
@@ -37,7 +35,7 @@ const (
 
 var (
 	errUsage = errors.New("usage")
-	// errReported: lỗi đã in chi tiết (vd. verify), chỉ cần mã thoát 1.
+
 	errReported = errors.New("failed")
 )
 
@@ -203,7 +201,7 @@ func (c *cli) engine() (*engine.Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e.Publish = true // chạy một lần: đẩy Pushgateway / ghi textfile nếu được cấu hình
+	e.Publish = true
 	return e, nil
 }
 
@@ -292,7 +290,7 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 	if err != nil {
 		return err
 	}
-	e.Publish = false // daemon phục vụ /metrics
+	e.Publish = false
 	if listen == "" {
 		listen = e.Cfg.Metrics.Listen
 	}
@@ -302,7 +300,7 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 			if expr == "" {
 				continue
 			}
-			s, err := cron.Parse(expr) // đã kiểm khi nạp cấu hình
+			s, err := cron.Parse(expr)
 			if err != nil {
 				return fmt.Errorf("job %s: %w", j.Name, err)
 			}
@@ -338,7 +336,6 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 	})
 }
 
-// forJobs chạy backup/check cho một job hoặc tất cả (lần lượt, tiếp tục khi có job lỗi).
 func (c *cli) forJobs(op, job string, all bool) error {
 	e, err := c.engine()
 	if err != nil {

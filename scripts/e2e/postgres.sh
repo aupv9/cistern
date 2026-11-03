@@ -1,4 +1,3 @@
-# Chạy bên trong container postgres (xem scripts/e2e-local.sh).
 set -euo pipefail
 step() { echo; echo "==> $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -19,7 +18,6 @@ metrics:
   textfile_dir: /e2e/metrics
 notify:
   webhooks:
-    # Cổng đóng: webhook lỗi chỉ được ghi log, không làm job thất bại.
     - { url: "http://127.0.0.1:9/hook", format: slack, on: [failure] }
 jobs:
   - name: orders-db

@@ -1,7 +1,3 @@
-// Package engine điều phối job: khóa, sink/source cho driver, manifest, verify, restore.
-// Xem docs/architecture.md.
-//
-// TODO: hook pre/post, repository S3, incremental (Previous).
 package engine
 
 import (
@@ -33,8 +29,7 @@ type Engine struct {
 	Version string
 	Log     *slog.Logger
 	Metrics *metrics.Registry
-	// Publish: sau mỗi thao tác đẩy metrics của job lên Pushgateway / ghi textfile (chế độ chạy
-	// một lần, vd. CronJob). Daemon để false và phục vụ /metrics.
+
 	Publish bool
 
 	notifier *notify.Notifier
@@ -126,8 +121,6 @@ func (e *Engine) pipelineOptions() pipeline.Options {
 	return o
 }
 
-// ---------- khóa job ----------
-
 func (e *Engine) lock(ctx context.Context, r repo.Repository, prefix string, job *config.Job, op, snap string) (func(), error) {
 	key := manifest.LockKey(prefix, job.Name)
 	now := e.now().UTC()
@@ -164,8 +157,6 @@ func (e *Engine) lock(ctx context.Context, r repo.Repository, prefix string, job
 	}
 	return nil, errors.New("could not acquire lock")
 }
-
-// ---------- sink: driver ghi artifact ----------
 
 type sink struct {
 	ctx               context.Context
@@ -209,7 +200,7 @@ func (s *sink) Create(name string) (io.WriteCloser, error) {
 	key := manifest.ArtifactKey(s.prefix, s.job, s.snap, name, suffix)
 	pr, pw := io.Pipe()
 	aw := &artifactWriter{s: s, name: name, path: "artifacts/" + name + suffix, pw: pw, done: make(chan error, 1)}
-	// Upload chạy song song với driver: dump → nén → mã hóa → upload cùng lúc (NFR-06).
+
 	go func() {
 		err := s.repo.Put(s.ctx, key, pr)
 		if err != nil {
@@ -230,7 +221,6 @@ func (s *sink) Create(name string) (io.WriteCloser, error) {
 	return aw, nil
 }
 
-// Previous trả về snapshot hoàn tất gần nhất của job (cho driver incremental), tính một lần.
 func (s *sink) Previous() driver.Source {
 	s.prevOnce.Do(func() {
 		if s.previous != nil {
@@ -240,8 +230,6 @@ func (s *sink) Previous() driver.Source {
 	return s.prev
 }
 
-// previousSource: snapshot mới nhất cùng driver; nil nếu không có hoặc không đọc được
-// (snapshot mã hóa mà không có encryption.identity_file).
 func (e *Engine) previousSource(ctx context.Context, r repo.Repository, prefix string, job *config.Job) driver.Source {
 	list, err := e.list(ctx, r, prefix, job.Name)
 	if err != nil {
@@ -299,7 +287,6 @@ func (a *artifactWriter) Close() error {
 	return nil
 }
 
-// abort hủy mọi artifact driver chưa đóng (upload dừng, file tạm bị xóa).
 func (s *sink) abort(cause error) {
 	s.mu.Lock()
 	open := make([]*artifactWriter, 0, len(s.open))
@@ -325,8 +312,6 @@ func (s *sink) unclosed() []string {
 	sort.Strings(names)
 	return names
 }
-
-// ---------- backup ----------
 
 func (e *Engine) Backup(ctx context.Context, jobName string) (*manifest.Manifest, error) {
 	job, err := e.Cfg.Job(jobName)
@@ -393,7 +378,7 @@ func (e *Engine) backup(ctx context.Context, job *config.Job) (*manifest.Manifes
 			m.Recipients = append(m.Recipients, rc.String())
 		}
 		data, _ := json.MarshalIndent(m, "", "  ")
-		// Manifest ghi cuối cùng: có manifest nghĩa là snapshot hoàn tất.
+
 		err = r.Put(bctx, manifest.ManifestKey(prefix, job.Name, snap), strings.NewReader(string(data)+"\n"))
 	}
 	if err != nil {
@@ -408,7 +393,6 @@ func (e *Engine) backup(ctx context.Context, job *config.Job) (*manifest.Manifes
 	}
 	log.Info("backup completed", "artifacts", len(m.Artifacts), "stored_bytes", stored, "duration", m.FinishedAt.Sub(started).Round(time.Millisecond))
 
-	// prune_after_backup chạy trong cùng khóa; lỗi prune chỉ cảnh báo, backup vẫn thành công.
 	if job.PruneAfterBackup != nil && *job.PruneAfterBackup {
 		if rep, err := e.prune(ctx, r, prefix, job, false); err != nil {
 			log.Warn("prune after backup failed", "err", err)
@@ -453,7 +437,6 @@ func (e *Engine) recordBackup(ctx context.Context, job *config.Job, start time.T
 
 func unix(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
 
-// refreshJob đặt các gauge suy ra từ repository: số snapshot, kích thước bản mới nhất và bản trước.
 func (e *Engine) refreshJob(ctx context.Context, job *config.Job) {
 	r, prefix, err := e.repoFor(job)
 	if err != nil {
@@ -474,8 +457,6 @@ func (e *Engine) refreshJob(ctx context.Context, job *config.Job) {
 	}
 }
 
-// RefreshMetrics nạp lại metrics từ repository (daemon gọi khi khởi động, để thời điểm backup
-// thành công gần nhất không bị mất sau khi khởi động lại).
 func (e *Engine) RefreshMetrics(ctx context.Context) {
 	e.Metrics.Set(metrics.BuildInfo, metrics.Labels{{"version", e.Version}}, 1)
 	for _, job := range e.Cfg.Jobs {
@@ -501,7 +482,6 @@ type JobStatus struct {
 	LastVerifySuccess *time.Time `json:"last_verify_success,omitempty"`
 }
 
-// Status tóm tắt từng job từ metrics hiện có (cho /status của daemon).
 func (e *Engine) Status() map[string]any {
 	ts := func(name, job string) *time.Time {
 		v, ok := e.Metrics.Get(name, metrics.Job(job))
@@ -557,9 +537,6 @@ func (e *Engine) removeSnapshot(r repo.Repository, prefix, job, snap string, log
 	}
 }
 
-// ---------- list ----------
-
-// List trả về các snapshot hoàn tất (có manifest), cũ trước mới sau.
 func (e *Engine) List(ctx context.Context, jobName string) ([]*manifest.Manifest, error) {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {
@@ -591,7 +568,7 @@ func (e *Engine) list(ctx context.Context, r repo.Repository, prefix, job string
 		}
 		out = append(out, m)
 	}
-	// ID chỉ chính xác tới giây: sắp theo started_at rồi mới tới ID.
+
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].StartedAt.Equal(out[j].StartedAt) {
 			return out[i].StartedAt.Before(out[j].StartedAt)
@@ -617,7 +594,6 @@ func readManifest(ctx context.Context, r repo.Repository, key string) (*manifest
 	return &m, nil
 }
 
-// resolve: "latest"/"" → mới nhất; ID đầy đủ; hoặc tiền tố duy nhất.
 func resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) {
 	if len(list) == 0 {
 		return nil, errors.New("no snapshots")
@@ -647,8 +623,6 @@ func resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) 
 	return nil, fmt.Errorf("snapshot prefix %q is ambiguous: %s", ref, strings.Join(ids, ", "))
 }
 
-// ---------- source: driver đọc artifact ----------
-
 type source struct {
 	ctx    context.Context
 	e      *Engine
@@ -660,7 +634,6 @@ type source struct {
 
 func (s *source) SnapshotID() string { return s.m.ID }
 
-// Snapshot mở một snapshot nằm trong depends_on của snapshot này (dữ liệu incremental).
 func (s *source) Snapshot(id string) (driver.Source, error) {
 	if id == s.m.ID {
 		return s, nil
@@ -753,8 +726,6 @@ func (a *artifactReader) Abort() {
 	}
 }
 
-// ---------- restore ----------
-
 func (e *Engine) Restore(ctx context.Context, jobName, ref string, overrides map[string]string) (*manifest.Manifest, error) {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {
@@ -767,7 +738,7 @@ func (e *Engine) Restore(ctx context.Context, jobName, ref string, overrides map
 		ev.Snapshot = m.ID
 	}
 	if err == nil {
-		// Restore thành công cũng chứng minh snapshot dùng được (docs/architecture.md).
+
 		e.Metrics.Set(metrics.VerifyLastSuccess, metrics.Job(job.Name), unix(e.now()))
 	}
 	e.notifier.Send(ctx, ev)
@@ -800,7 +771,7 @@ func (e *Engine) restore(ctx context.Context, job *config.Job, ref string, overr
 			return nil, errors.New("snapshot is encrypted: set encryption.identity_file to the private key")
 		}
 	}
-	// Tham số job + --set; cấu hình gốc không đổi.
+
 	params := driver.Params{}
 	for k, v := range job.Params {
 		params[k] = v
@@ -824,12 +795,10 @@ func (e *Engine) restore(ctx context.Context, job *config.Job, ref string, overr
 	return m, nil
 }
 
-// ---------- verify ----------
-
 type ArtifactResult struct {
 	Snapshot string `json:"snapshot"`
 	Artifact string `json:"artifact"`
-	Mode     string `json:"mode"` // full | stored
+	Mode     string `json:"mode"`
 	OK       bool   `json:"ok"`
 	Error    string `json:"error,omitempty"`
 }
@@ -840,8 +809,6 @@ type VerifyReport struct {
 	Failures int              `json:"failures"`
 }
 
-// Verify kiểm snapshot (ref: latest, ID, tiền tố, hoặc "all"). Có private key (hoặc không mã hóa):
-// giải mã và kiểm cả hai checksum; không có: chỉ kiểm kích thước và checksum bản lưu.
 func (e *Engine) Verify(ctx context.Context, jobName, ref string) (*VerifyReport, error) {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {
@@ -951,9 +918,6 @@ func (e *Engine) verifyArtifact(ctx context.Context, r repo.Repository, prefix s
 	return rc.Close()
 }
 
-// ---------- check ----------
-
-// Check kiểm repository truy cập được và driver sẵn sàng (công cụ có sẵn, nguồn kết nối được).
 func (e *Engine) Check(ctx context.Context, jobName string) error {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {

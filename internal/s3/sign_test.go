@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// Test vector từ tài liệu AWS "Signature Calculations for the Authorization Header: Transferring
-// Payload in a Single Chunk" (bucket examplebucket, 2013-05-24, us-east-1).
 func TestSigV4AWSVectors(t *testing.T) {
 	cred := Credentials{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}
 	ts := time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)

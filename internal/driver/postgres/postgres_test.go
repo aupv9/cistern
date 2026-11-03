@@ -13,13 +13,12 @@ import (
 	"cistern/internal/driver"
 )
 
-// fakePG mô phỏng psql/pg_dump/pg_dumpall/pg_restore và ghi lại mọi lệnh.
 type fakePG struct {
 	client, server string
 	databases      []string
 	existing       map[string]bool
 	calls          []driver.Command
-	restored       map[string]string // database → nội dung pg_restore nhận
+	restored       map[string]string
 	failDump       string
 	failRestore    bool
 }
@@ -152,7 +151,7 @@ func TestBackup(t *testing.T) {
 	if info.Version != "16.2" || info.Host != "db:5432" || info.Extra["pg_dump_version"] != "16.4" || info.Extra["databases"] != "orders,users" {
 		t.Errorf("info: %+v", info)
 	}
-	// NFR-02: mật khẩu chỉ nằm trong env, không bao giờ trong đối số.
+
 	for _, c := range f.calls {
 		if strings.Contains(strings.Join(c.Args, " "), "s3cret") {
 			t.Errorf("password in args: %s", c)
@@ -206,13 +205,11 @@ func TestBackupSelectedAndErrors(t *testing.T) {
 func TestRestore(t *testing.T) {
 	src := memSource{files: map[string]string{"db/orders.dump": "DUMP:orders", "db/users.dump": "DUMP:users", "globals.sql": "GLOBALS"}}
 
-	// Đích đã tồn tại, không clean → từ chối.
 	f := newFake()
 	if err := newPG(t, f, nil).Restore(context.Background(), src); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected refusal, got %v", err)
 	}
 
-	// Restore sang tên mới một database.
 	f = newFake()
 	pg := newPG(t, f, driver.Params{"databases": "orders", "restore_suffix": "_restored"})
 	if err := pg.Restore(context.Background(), src); err != nil {
@@ -222,7 +219,6 @@ func TestRestore(t *testing.T) {
 		t.Fatalf("restored: %v", f.restored)
 	}
 
-	// clean=true ghi đè database có sẵn với --clean --if-exists.
 	f = newFake()
 	if err := newPG(t, f, driver.Params{"clean": "true"}).Restore(context.Background(), src); err != nil {
 		t.Fatal(err)
@@ -240,7 +236,6 @@ func TestRestore(t *testing.T) {
 		t.Error("database not in snapshot accepted")
 	}
 
-	// pg_restore lỗi: database vừa tạo bị xóa; database có sẵn (clean=true) thì giữ nguyên.
 	f = newFake()
 	f.failRestore = true
 	if err := newPG(t, f, driver.Params{"databases": "orders", "restore_suffix": "_new"}).Restore(context.Background(), src); err == nil {

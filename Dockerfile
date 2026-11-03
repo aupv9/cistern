@@ -8,8 +8,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 
 FROM debian:bookworm-slim
 ARG PG_MAJOR=16
-# TODO: not verified yet. Add the PGDG repository to pin postgresql-client-${PG_MAJOR} and a MySQL client;
-# until then the postgres and mysql drivers do not work in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl redis-tools age \
     && rm -rf /var/lib/apt/lists/*

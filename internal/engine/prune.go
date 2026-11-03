@@ -16,7 +16,6 @@ import (
 	"cistern/internal/retention"
 )
 
-// incompleteAge: thư mục snapshot không có manifest và cũ hơn mức này được coi là bản dở bỏ lại.
 const incompleteAge = time.Hour
 
 const (
@@ -38,11 +37,10 @@ type PruneReport struct {
 	DryRun  bool        `json:"dry_run"`
 	Items   []PruneItem `json:"items"`
 	Kept    int         `json:"kept"`
-	Removed int         `json:"removed"` // với dry_run: số snapshot sẽ bị xóa
+	Removed int         `json:"removed"`
 	Errors  int         `json:"errors"`
 }
 
-// Prune áp retention cho job (docs/architecture.md#retention). dryRun chỉ báo cáo, không khóa, không xóa.
 func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*PruneReport, error) {
 	job, err := e.Cfg.Job(jobName)
 	if err != nil {
@@ -84,12 +82,10 @@ func (e *Engine) lockedPrune(ctx context.Context, job *config.Job, dryRun bool) 
 	return e.prune(ctx, r, prefix, job, dryRun)
 }
 
-// prune giả định đã giữ khóa job (trừ khi dryRun).
 func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, job *config.Job, dryRun bool) (*PruneReport, error) {
 	log := e.Log.With("job", job.Name)
 	rep := &PruneReport{Job: job.Name, DryRun: dryRun}
 
-	// 1. Quét repository: thư mục có manifest.json là snapshot hoàn tất, không có là bản dở.
 	jobDir := path.Join(prefix, job.Name) + "/"
 	keys, err := r.List(ctx, jobDir)
 	if err != nil {
@@ -113,7 +109,7 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 	for id := range hasManifest {
 		m, err := readManifest(ctx, r, manifest.ManifestKey(prefix, job.Name, id))
 		if err != nil {
-			// Không đọc được manifest: không xóa thứ mình không hiểu.
+
 			rep.Items = append(rep.Items, PruneItem{Snapshot: id, Action: ActionKeep, Reasons: []string{"unreadable manifest"}, Error: err.Error()})
 			rep.Errors++
 			continue
@@ -122,7 +118,6 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 		snaps = append(snaps, retention.Snapshot{ID: id, FinishedAt: m.FinishedAt, DependsOn: m.DependsOn})
 	}
 
-	// 2–4. Áp GFS, giữ chuỗi depends_on, xóa phần còn lại.
 	var decisions []retention.Decision
 	if job.Retention == nil {
 		log.Warn("no retention policy configured; keeping all snapshots")
@@ -151,7 +146,6 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 		rep.Items = append(rep.Items, item)
 	}
 
-	// 5. Bản dở (không manifest) cũ hơn 1 giờ.
 	var incomplete []string
 	for id := range dirs {
 		if !hasManifest[id] {
@@ -184,11 +178,10 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 		case it.Action == ActionRemove && it.Error == "":
 			rep.Removed++
 		case it.Action == ActionRemove:
-			rep.Kept++ // xóa thất bại: snapshot vẫn còn
+			rep.Kept++
 		}
 	}
 
-	// 6. Metrics.
 	if !dryRun {
 		l := metrics.Job(job.Name)
 		e.Metrics.Set(metrics.Snapshots, l, float64(len(manifests)-rep.Removed))
@@ -197,8 +190,6 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 	return rep, nil
 }
 
-// deleteSnapshot: dữ liệu ngoài repository (Forgetter) trước — lỗi thì giữ snapshot; rồi manifest,
-// cuối cùng artifact. Bị ngắt giữa chừng thì phần còn lại thành bản dở, lần prune sau dọn tiếp.
 func (e *Engine) deleteSnapshot(ctx context.Context, r repo.Repository, prefix string, job *config.Job, m *manifest.Manifest, keys []string) error {
 	drv, err := driver.New(m.Driver, driver.Params(job.Params))
 	if err != nil {

@@ -1,4 +1,3 @@
-// Package all import mọi driver để chúng tự đăng ký.
 package all
 
 import (

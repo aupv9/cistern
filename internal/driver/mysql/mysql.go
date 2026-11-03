@@ -1,25 +1,3 @@
-// Package mysql là driver "mysql" (FR-04) cho MySQL và MariaDB: mysqldump/mariadb-dump nhất quán
-// (--single-transaction) cho từng database, kèm routine, trigger, event; restore bằng client mysql.
-//
-// Artifact: db/<database>.sql — SQL thuần, khôi phục thủ công được bằng
-// `age -d -i key f.sql.gz.age | gunzip | mysql <database>`. Dump không chứa CREATE DATABASE / USE,
-// nên restore được sang tên khác; dòng đầu ALTER DATABASE giữ character set và collation gốc.
-//
-// Tham số (params trong job, ghi đè lúc restore bằng --set):
-//
-//	host, port, user, password, socket   kết nối; ghi vào file option tạm 0600 (--defaults-extra-file),
-//	                                     không qua đối số lệnh hay biến môi trường
-//	ssl_mode (chỉ client MySQL), ssl_ca
-//	client          auto (mặc định) | mysql | mariadb — bộ công cụ dùng
-//	databases       danh sách cách nhau bởi dấu phẩy; trống = mọi database trừ schema hệ thống
-//	events          dump event (mặc định true; cần quyền EVENT)
-//	gtid_purged     giá trị --set-gtid-purged (OFF | ON | AUTO), chỉ client MySQL
-//	restore_suffix  hậu tố tên database đích khi restore
-//	clean           cho phép restore vào database đã tồn tại (bảng trong dump bị thay, object khác giữ nguyên)
-//
-// Hạn chế: view, routine, trigger tham chiếu tên database đầy đủ (`db`.`bảng`) vẫn trỏ về database
-// gốc khi restore sang tên khác. Bảng không phải InnoDB không nhất quán với --single-transaction.
-// Người dùng và quyền (bảng mysql.*) không được dump.
 package mysql
 
 import (
@@ -110,7 +88,6 @@ func parseBool(s string, def bool) (bool, error) {
 
 func (m *MySQL) Name() string { return "mysql" }
 
-// tools: chương trình dump, client và họ (mysql | mariadb).
 type tools struct{ dump, cli, flavor string }
 
 func (m *MySQL) tools() (tools, error) {
@@ -137,7 +114,6 @@ func optValue(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s) + `"`
 }
 
-// withOptions ghi thông tin kết nối vào file option 0600 trong thư mục tạm 0700 (NFR-02).
 func (m *MySQL) withOptions(t tools, f func(optArg string) error) error {
 	if t.flavor == "mariadb" && m.p["ssl_mode"] != "" {
 		return errors.New("mysql: ssl_mode is only supported with the MySQL client; use ssl_ca")
@@ -159,7 +135,7 @@ func (m *MySQL) withOptions(t tools, f func(optArg string) error) error {
 	if err != nil {
 		return err
 	}
-	return f("--defaults-extra-file=" + path) // phải là đối số đầu tiên
+	return f("--defaults-extra-file=" + path)
 }
 
 func (m *MySQL) query(ctx context.Context, t tools, opt, sql string) (string, error) {
@@ -210,7 +186,7 @@ func (m *MySQL) versions(ctx context.Context, t tools, opt string) (versionInfo,
 		return v, fmt.Errorf("%s %d.%d is older than server %s: install a client >= %d.%d", t.dump, cMaj, cMin, v.server, sMaj, sMin)
 	}
 	if t.flavor == "mysql" && cMaj >= 8 && v.serverMaria {
-		v.extraArgs = append(v.extraArgs, "--column-statistics=0") // MariaDB không có COLUMN_STATISTICS
+		v.extraArgs = append(v.extraArgs, "--column-statistics=0")
 	}
 	if g := m.p["gtid_purged"]; g != "" {
 		if t.flavor != "mysql" {
@@ -223,7 +199,7 @@ func (m *MySQL) versions(ctx context.Context, t tools, opt string) (versionInfo,
 
 func artifactName(db string) (string, error) {
 	name := dbPrefix + db + dbSuffix
-	// Tên được nhúng vào SQL ('...' và `...`) và dùng làm đối số: chỉ nhận tập ký tự an toàn.
+
 	if strings.HasPrefix(db, "-") || strings.ContainsAny(db, "'`\"\\") || manifest.ValidateArtifactName(name) != nil {
 		return "", fmt.Errorf("database name %q is not supported (allowed: A-Z a-z 0-9 . _ @ = + -, not starting with -)", db)
 	}
@@ -353,7 +329,7 @@ func (m *MySQL) dumpDB(ctx context.Context, t tools, opt string, v versionInfo, 
 	args = append(args, v.extraArgs...)
 	args = append(args, db)
 	if err := m.run(ctx, driver.Command{Name: t.dump, Args: args, Stdout: w}); err != nil {
-		return err // engine hủy artifact đang mở
+		return err
 	}
 	return w.Close()
 }
@@ -423,11 +399,11 @@ func (m *MySQL) restoreDB(ctx context.Context, t tools, opt string, src driver.S
 		if err != nil {
 			driver.Abort(rc)
 		} else {
-			err = rc.Close() // đọc nốt và kiểm checksum (NFR-03)
+			err = rc.Close()
 		}
 	}
 	if err != nil && created {
-		// Database do chính lần restore này tạo: xóa bản dở để lần thử lại không bị "already exists".
+
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		if _, derr := m.query(dctx, t, opt, "DROP DATABASE IF EXISTS `"+target+"`"); derr != nil {

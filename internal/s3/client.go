@@ -1,5 +1,3 @@
-// Package s3 là client S3 tự viết (không phụ thuộc SDK): SigV4, put đơn hoặc multipart,
-// get, list v2, delete, If-None-Match, Object Lock. Tự thử lại yêu cầu khi lỗi mạng, 5xx hoặc 429.
 package s3
 
 import (
@@ -28,12 +26,12 @@ const (
 )
 
 type Config struct {
-	Endpoint           string // https://s3.ap-southeast-1.amazonaws.com, http://minio:9000
-	Region             string // mặc định us-east-1
+	Endpoint           string
+	Region             string
 	Bucket             string
 	PathStyle          bool
 	Credentials        Credentials
-	PartSize           int64 // mặc định 16 MiB
+	PartSize           int64
 	CAFile             string
 	InsecureSkipVerify bool
 	Log                *slog.Logger
@@ -105,13 +103,11 @@ func New(cfg Config) (*Client, error) {
 				ResponseHeaderTimeout: 2 * time.Minute,
 				MaxIdleConnsPerHost:   4,
 			},
-			// Chuyển hướng (vd. sai region) làm hỏng chữ ký: trả lỗi rõ ràng thay vì đi theo.
+
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}, nil
 }
-
-// ---------- lỗi ----------
 
 var (
 	ErrNotFound           = errors.New("s3: not found")
@@ -142,7 +138,7 @@ func (e *Error) Is(target error) bool {
 	case ErrNotFound:
 		return e.StatusCode == http.StatusNotFound
 	case ErrPreconditionFailed:
-		// 409 ConditionalRequestConflict: một ghi có điều kiện khác đang diễn ra cùng key.
+
 		return e.StatusCode == http.StatusPreconditionFailed || e.Code == "ConditionalRequestConflict"
 	}
 	return false
@@ -171,8 +167,6 @@ func parseError(op string, status int, body []byte) *Error {
 	}
 	return e
 }
-
-// ---------- yêu cầu ----------
 
 type request struct {
 	op      string
@@ -213,7 +207,6 @@ func (c *Client) sleep(ctx context.Context, attempt int) error {
 	}
 }
 
-// do gửi yêu cầu (thử lại khi được phép) và trả về phản hồi 2xx; lỗi đã được phân tích thành *Error.
 func (c *Client) do(ctx context.Context, rq request) (*http.Response, error) {
 	payloadHash := EmptySHA256
 	if rq.body != nil {
@@ -243,7 +236,7 @@ func (c *Client) do(ctx context.Context, rq request) (*http.Response, error) {
 			req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 			req.ContentLength = int64(len(body))
 		case rq.body != nil:
-			// Body rỗng phải là http.NoBody: reader rỗng khiến Go gửi chunked, S3 trả 411.
+
 			req.Body = http.NoBody
 			req.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
 		}
@@ -276,22 +269,20 @@ func drain(resp *http.Response) {
 	resp.Body.Close()
 }
 
-// ---------- Object Lock ----------
-
 const (
 	LockGovernance = "GOVERNANCE"
 	LockCompliance = "COMPLIANCE"
 )
 
 type Retention struct {
-	Mode  string // GOVERNANCE | COMPLIANCE
+	Mode  string
 	Until time.Time
 }
 
 type PutOptions struct {
-	IfNoneMatch bool       // chỉ ghi khi key chưa tồn tại (412 nếu đã có)
-	Retention   *Retention // Object Lock cho object này
-	ContentType string     // mặc định application/octet-stream
+	IfNoneMatch bool
+	Retention   *Retention
+	ContentType string
 }
 
 func (o PutOptions) contentType() string {
@@ -313,12 +304,10 @@ func contentMD5(b []byte) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-// ---------- thao tác ----------
-
 func (c *Client) putOnce(ctx context.Context, key string, data []byte, o PutOptions, noRetry bool) error {
 	h := http.Header{}
 	h.Set("Content-Type", o.contentType())
-	h.Set("Content-Md5", contentMD5(data)) // bắt buộc khi có Object Lock; luôn gửi để S3 kiểm toàn vẹn
+	h.Set("Content-Md5", contentMD5(data))
 	if o.IfNoneMatch {
 		h.Set("If-None-Match", "*")
 	}
@@ -338,13 +327,11 @@ func nonNil(b []byte) []byte {
 	return b
 }
 
-// PutObject ghi một object từ bộ nhớ.
 func (c *Client) PutObject(ctx context.Context, key string, data []byte, o PutOptions) error {
 	if !o.IfNoneMatch {
 		return c.putOnce(ctx, key, data, o, false)
 	}
-	// Ghi có điều kiện: nếu lần trước thực ra đã thành công nhưng mất phản hồi, lần thử lại nhận 412.
-	// Khi đó đọc lại và coi là thành công nếu nội dung đúng là của mình.
+
 	var err error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
@@ -380,8 +367,6 @@ func (c *Client) getBytes(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(rc)
 }
 
-// Upload đọc r tới hết và ghi vào key. Dữ liệu nhỏ hơn một part: PutObject; lớn hơn: multipart,
-// bộ nhớ dùng tối đa một part. Nếu r trả lỗi, object không được tạo và upload dở bị hủy.
 func (c *Client) Upload(ctx context.Context, key string, r io.Reader, o PutOptions) error {
 	buf := make([]byte, c.partSize)
 	n, rerr := io.ReadFull(r, buf)
@@ -489,7 +474,7 @@ func (c *Client) completeMultipart(ctx context.Context, key, uploadID string, pa
 	if err != nil {
 		return err
 	}
-	// S3 có thể trả 200 rồi mới báo lỗi trong thân phản hồi.
+
 	data, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	if rerr != nil {
@@ -513,14 +498,13 @@ func (c *Client) abortMultipart(ctx context.Context, key, uploadID string) error
 	return nil
 }
 
-// GetObject trả về nội dung object; người gọi phải Close.
 func (c *Client) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	rc, _, err := c.GetObjectWith(ctx, key, GetOptions{})
 	return rc, err
 }
 
 type GetOptions struct {
-	IfMatch string // ETag; object đã đổi thì trả ErrPreconditionFailed
+	IfMatch string
 }
 
 type ObjectMeta struct {
@@ -554,7 +538,6 @@ type listResult struct {
 	NextContinuationToken string       `xml:"NextContinuationToken"`
 }
 
-// ListObjects trả về mọi key có tiền tố prefix (ListObjectsV2, tự phân trang).
 func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, error) {
 	infos, err := c.list(ctx, prefix, 0)
 	if err != nil {
@@ -567,7 +550,6 @@ func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, erro
 	return keys, nil
 }
 
-// ListObjectsInfo như ListObjects nhưng kèm ETag, kích thước, thời điểm sửa.
 func (c *Client) ListObjectsInfo(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	return c.list(ctx, prefix, 0)
 }
@@ -604,14 +586,11 @@ func (c *Client) list(ctx context.Context, prefix string, limit int) ([]ObjectIn
 	}
 }
 
-// Probe kiểm bucket truy cập được với quyền list.
 func (c *Client) Probe(ctx context.Context, prefix string) error {
 	_, err := c.list(ctx, prefix, 1)
 	return err
 }
 
-// DeleteObject xóa key; trên bucket có versioning (Object Lock) chỉ tạo delete marker,
-// bản đã khóa vẫn còn đến hết hạn khóa.
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
 	resp, err := c.do(ctx, request{op: "DeleteObject", method: http.MethodDelete, key: key})
 	if err != nil {
@@ -628,7 +607,6 @@ type lockConfig struct {
 	ObjectLockEnabled string `xml:"ObjectLockEnabled"`
 }
 
-// ObjectLockEnabled cho biết bucket có bật Object Lock không.
 func (c *Client) ObjectLockEnabled(ctx context.Context) (bool, error) {
 	resp, err := c.do(ctx, request{op: "GetObjectLockConfiguration", method: http.MethodGet, query: url.Values{"object-lock": {""}}})
 	if err != nil {

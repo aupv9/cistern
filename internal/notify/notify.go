@@ -1,5 +1,3 @@
-// Package notify: webhook Slack, Teams ({text}), Telegram ({chat_id, text}) hoặc JSON đầy đủ.
-// Lỗi gửi webhook chỉ được ghi log, không làm job thất bại.
 package notify
 
 import (
@@ -23,10 +21,9 @@ const (
 	StatusFailure = "failure"
 )
 
-// Event là nội dung gửi đi; định dạng json gửi nguyên struct này.
 type Event struct {
 	Job         string    `json:"job"`
-	Op          string    `json:"op"` // backup | verify | prune | restore
+	Op          string    `json:"op"`
 	Status      string    `json:"status"`
 	Snapshot    string    `json:"snapshot,omitempty"`
 	Error       string    `json:"error,omitempty"`
@@ -94,7 +91,6 @@ func New(hooks []*config.Webhook, log *slog.Logger) *Notifier {
 	}}
 }
 
-// Send gửi tới mọi webhook có `on` khớp trạng thái. Lỗi được ghi log và trả về để test.
 func (n *Notifier) Send(ctx context.Context, ev Event) []error {
 	var errs []error
 	for _, h := range n.hooks {
@@ -159,13 +155,12 @@ func (n *Notifier) send(ctx context.Context, h *config.Webhook, ev Event) error 
 		}
 		last = fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(msg)))
 		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
-			return last // lỗi phía client: thử lại vô ích
+			return last
 		}
 	}
 	return last
 }
 
-// redact bỏ phần path/query của URL webhook (chứa token Slack/Telegram) khỏi log.
 func redact(s string) string {
 	for _, f := range strings.Fields(s) {
 		f = strings.Trim(f, `"':`)

@@ -2,7 +2,6 @@ package driver
 
 import "context"
 
-// Stub là driver giữ chỗ: đăng ký tên nhưng mọi thao tác trả về ErrNotImplemented.
 type Stub struct {
 	name   string
 	Params Params

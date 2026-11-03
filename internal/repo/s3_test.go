@@ -52,7 +52,7 @@ func TestS3ObjectLock(t *testing.T) {
 	if l, _ := srv.Current("locks/job.lock"); l.LockMode != "" {
 		t.Error("job lock file must not be locked")
 	}
-	// Prune xóa = delete marker; bản đã khóa còn nguyên.
+
 	if err := r.Delete(ctx, "job/s1/manifest.json"); err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +62,12 @@ func TestS3ObjectLock(t *testing.T) {
 	if vs := srv.Versions("job/s1/manifest.json"); len(vs) != 2 || string(vs[0].Data) != "{}" {
 		t.Fatalf("locked version lost: %+v", vs)
 	}
-	// Khóa job: xóa rồi lấy lại được (delete marker không chặn If-None-Match).
+
 	r.Delete(ctx, "locks/job.lock")
 	if err := r.PutIfAbsent(ctx, "locks/job.lock", []byte("y")); err != nil {
 		t.Fatalf("re-acquire lock: %v", err)
 	}
 
-	// Cấu hình Object Lock nhưng bucket không bật → check báo lỗi.
 	bad, _ := newS3(t, false, s3.LockCompliance)
 	if err := bad.Check(ctx); err == nil || !strings.Contains(err.Error(), "Object Lock") {
 		t.Fatalf("check: %v", err)

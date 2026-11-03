@@ -38,7 +38,7 @@ func random(n int) []byte {
 func TestPutGetListDelete(t *testing.T) {
 	ctx := context.Background()
 	c, srv := newClient(t, false)
-	srv.MaxKeys = 2 // ép phân trang
+	srv.MaxKeys = 2
 
 	keys := []string{"p/job/a", "p/job/b@x=y+z", "p/job/c d", "p/locks/job.lock", "q/other"}
 	for i, k := range keys {
@@ -122,7 +122,7 @@ func TestUploadAbortsOnReaderError(t *testing.T) {
 	if _, ok := srv.Current("k"); ok || srv.OpenUploads() != 0 {
 		t.Fatalf("object created or upload not aborted (open uploads: %d)", srv.OpenUploads())
 	}
-	// Lỗi trước khi đủ một part: không có yêu cầu ghi nào.
+
 	before := len(srv.Requests())
 	c.Upload(ctx, "k2", &failAfter{r: bytes.NewReader(random(100)), n: 50}, s3.PutOptions{})
 	if len(srv.Requests()) != before {
@@ -158,7 +158,7 @@ func TestRetries(t *testing.T) {
 	if _, err := c.ListObjects(ctx, ""); err != nil {
 		t.Fatalf("list after retry: %v", err)
 	}
-	// 4xx không thử lại.
+
 	srv.Inject(s3test.Fault{Method: "PUT", Status: 403})
 	n := len(srv.Requests())
 	if err := c.PutObject(ctx, "x", []byte("1"), s3.PutOptions{}); err == nil {
@@ -179,7 +179,7 @@ func TestConditionalPut(t *testing.T) {
 	if err := c.PutObject(ctx, "lock", []byte("other"), o); !errors.Is(err, s3.ErrPreconditionFailed) {
 		t.Fatalf("second put: %v", err)
 	}
-	// Phản hồi đầu bị mất (server đã ghi), lần thử lại nhận 412 nhưng nội dung là của mình → thành công.
+
 	srv.Inject(s3test.Fault{Method: "PUT", Status: 500, AfterProcessing: true})
 	if err := c.PutObject(ctx, "lock2", []byte("mine"), o); err != nil {
 		t.Fatalf("lost response: %v", err)
@@ -209,7 +209,7 @@ func TestObjectLock(t *testing.T) {
 			t.Errorf("%s: lock %s until %v", k, v.LockMode, v.RetainUntil)
 		}
 	}
-	// DELETE chỉ tạo delete marker; bản bị khóa vẫn còn.
+
 	if err := c.DeleteObject(ctx, "small"); err != nil {
 		t.Fatal(err)
 	}

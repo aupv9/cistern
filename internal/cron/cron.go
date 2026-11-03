@@ -1,9 +1,3 @@
-// Package cron: biểu thức cron 5 trường (phút giờ ngày tháng thứ), các macro @yearly @monthly
-// @weekly @daily @hourly và @every <duration>.
-//
-// Mỗi trường nhận *, số, khoảng a-b, bước */n hoặc a-b/n hoặc a/n, danh sách cách nhau bởi dấu phẩy;
-// tháng và thứ nhận tên tiếng Anh (jan, mon). Thứ 0 và 7 đều là Chủ nhật. Như cron chuẩn: khi cả
-// ngày-trong-tháng và thứ đều bị giới hạn, khớp một trong hai là đủ.
 package cron
 
 import (
@@ -15,7 +9,6 @@ import (
 )
 
 type Schedule interface {
-	// Next trả về thời điểm chạy kế tiếp sau t (cùng múi giờ với t); zero nếu không bao giờ.
 	Next(t time.Time) time.Time
 }
 
@@ -80,7 +73,7 @@ func Parse(expr string) (Schedule, error) {
 			return nil, fmt.Errorf("cron %q: %s: %w", expr, fd.name, err)
 		}
 	}
-	if s.dow&(1<<7) != 0 { // 7 = Chủ nhật
+	if s.dow&(1<<7) != 0 {
 		s.dow |= 1
 	}
 	s.domStar, s.dowStar = f[2] == "*" || strings.HasPrefix(f[2], "*/"), f[4] == "*" || strings.HasPrefix(f[4], "*/")
@@ -158,7 +151,7 @@ func (s *spec) dayMatches(t time.Time) bool {
 func (s *spec) Next(t time.Time) time.Time {
 	loc := t.Location()
 	t = t.Truncate(time.Minute).Add(time.Minute)
-	limit := t.AddDate(5, 0, 0) // vd. "0 0 30 2 *" không bao giờ khớp
+	limit := t.AddDate(5, 0, 0)
 	for t.Before(limit) {
 		switch {
 		case !has(s.month, int(t.Month())):

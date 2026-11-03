@@ -14,7 +14,6 @@ func setProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
-// killProcessGroup dọn tiến trình con còn sót lại trong group sau khi lệnh chính đã thoát.
 func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)

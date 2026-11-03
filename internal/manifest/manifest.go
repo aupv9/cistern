@@ -1,8 +1,3 @@
-// Package manifest định nghĩa manifest.json của snapshot, ID snapshot và bố cục khóa trong repository.
-//
-//	<prefix>/<job>/<snapshot-id>/manifest.json
-//	<prefix>/<job>/<snapshot-id>/artifacts/<tên artifact>.gz.age
-//	<prefix>/locks/<job>.lock
 package manifest
 
 import (
@@ -19,7 +14,7 @@ const Format = 1
 
 type Source struct {
 	Version string            `json:"version,omitempty"`
-	Host    string            `json:"host,omitempty"` // đã bỏ credential
+	Host    string            `json:"host,omitempty"`
 	Extra   map[string]string `json:"extra,omitempty"`
 }
 
@@ -37,12 +32,12 @@ type Manifest struct {
 	ID             string     `json:"id"`
 	Job            string     `json:"job"`
 	Driver         string     `json:"driver"`
-	Status         string     `json:"status"` // luôn "completed"
+	Status         string     `json:"status"`
 	StartedAt      time.Time  `json:"started_at"`
 	FinishedAt     time.Time  `json:"finished_at"`
 	Source         Source     `json:"source"`
-	Compression    string     `json:"compression"` // gzip | none
-	Encryption     string     `json:"encryption"`  // age-x25519 | none
+	Compression    string     `json:"compression"`
+	Encryption     string     `json:"encryption"`
 	Recipients     []string   `json:"recipients,omitempty"`
 	DependsOn      []string   `json:"depends_on,omitempty"`
 	Artifacts      []Artifact `json:"artifacts"`
@@ -50,14 +45,13 @@ type Manifest struct {
 	Hostname       string     `json:"hostname"`
 }
 
-// Lock là nội dung locks/<job>.lock.
 type Lock struct {
 	Host     string    `json:"host"`
 	PID      int       `json:"pid"`
 	Op       string    `json:"op"`
 	Snapshot string    `json:"snapshot,omitempty"`
 	Started  time.Time `json:"started"`
-	Expires  time.Time `json:"expires"` // started + timeout + 10 phút
+	Expires  time.Time `json:"expires"`
 }
 
 const LockGrace = 10 * time.Minute
@@ -68,7 +62,6 @@ var (
 	snapshotRe = regexp.MustCompile(`^\d{8}T\d{6}Z-[0-9a-f]{4}$`)
 )
 
-// NewSnapshotID trả về ID dạng YYYYMMDDTHHMMSSZ-xxxx (UTC), sắp xếp theo thời gian khi so chuỗi.
 func NewSnapshotID(t time.Time) string {
 	var b [2]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -86,7 +79,6 @@ func ValidateJobName(name string) error {
 	return nil
 }
 
-// ValidateArtifactName: các đoạn [A-Za-z0-9._@=+-] nối bằng "/", không có "." hay "..".
 func ValidateArtifactName(name string) error {
 	if name == "" {
 		return fmt.Errorf("empty artifact name")
@@ -99,7 +91,6 @@ func ValidateArtifactName(name string) error {
 	return nil
 }
 
-// ArtifactSuffix: ".gz" khi nén, ".age" khi mã hóa.
 func ArtifactSuffix(compressed, encrypted bool) string {
 	s := ""
 	if compressed {

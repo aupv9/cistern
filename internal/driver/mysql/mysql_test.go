@@ -14,13 +14,12 @@ import (
 	"cistern/internal/driver"
 )
 
-// fakeMySQL mô phỏng mysql/mysqldump (hoặc bản mariadb) và ghi lại mọi lệnh.
 type fakeMySQL struct {
 	clientVer, serverVer string
 	databases            []string
 	existing             map[string]bool
 	calls                []driver.Command
-	optFiles             []string // nội dung file option lúc lệnh chạy
+	optFiles             []string
 	restored             map[string]string
 	failRestore          bool
 }
@@ -184,7 +183,6 @@ func TestBackupVariants(t *testing.T) {
 	t.Setenv("CISTERN_TMPDIR", t.TempDir())
 	sink := func() *memSink { return &memSink{files: map[string]*bytes.Buffer{}} }
 
-	// MariaDB: chỉ có mariadb-dump/mariadb.
 	f := newFake()
 	f.clientVer = "mariadb-dump from 11.4.13-MariaDB, client 10.19 for debian-linux-gnu (aarch64)"
 	f.serverVer = "11.4.13-MariaDB-ubu2404"
@@ -197,7 +195,6 @@ func TestBackupVariants(t *testing.T) {
 		}
 	}
 
-	// Client MySQL 8 với server MariaDB cần --column-statistics=0.
 	f = newFake()
 	f.serverVer = "10.11.9-MariaDB"
 	newDriver(t, f, nil).Backup(context.Background(), sink())
@@ -209,19 +206,18 @@ func TestBackupVariants(t *testing.T) {
 		t.Error("missing --column-statistics=0")
 	}
 
-	// Client cũ hơn server cùng họ → từ chối.
 	f = newFake()
 	f.clientVer = "mysqldump  Ver 8.0.36 for Linux"
 	if _, err := newDriver(t, f, nil).Backup(context.Background(), sink()); err == nil || !strings.Contains(err.Error(), "older than server") {
 		t.Errorf("old client: %v", err)
 	}
-	// Tên database không an toàn.
+
 	f = newFake()
 	f.databases = []string{"x'; DROP DATABASE y; --"}
 	if _, err := newDriver(t, f, nil).Backup(context.Background(), sink()); err == nil {
 		t.Error("unsafe database name accepted")
 	}
-	// Thiếu công cụ.
+
 	if _, err := newDriver(t, newFake(), nil, "psql").Backup(context.Background(), sink()); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("missing tools: %v", err)
 	}
@@ -257,7 +253,6 @@ func TestRestore(t *testing.T) {
 		t.Fatalf("clean restore: %v %v", err, f.restored)
 	}
 
-	// Lỗi khi nạp: database vừa tạo bị xóa; database có sẵn giữ nguyên.
 	f = newFake()
 	f.failRestore = true
 	if err := newDriver(t, f, driver.Params{"restore_suffix": "_new"}).Restore(context.Background(), src); err == nil {

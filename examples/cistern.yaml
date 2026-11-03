@@ -1,6 +1,3 @@
-# Example Cistern configuration. Every key is described in docs/configuration.md.
-# Unknown keys are rejected. ${VAR} and ${VAR:-default} are read from the environment.
-
 repositories:
   local:
     type: local
@@ -11,34 +8,26 @@ repositories:
     region: ap-southeast-1
     bucket: company-backups
     prefix: cistern
-    # Leave both empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
     access_key_id: ${S3_ACCESS_KEY_ID}
     secret_access_key: ${S3_SECRET_ACCESS_KEY}
     part_size_mb: 16
-    # The bucket must be created with Object Lock (docs/repositories.md).
-    # Keep days no longer than the shortest retention period.
     object_lock: { mode: COMPLIANCE, days: 7 }
 
 encryption:
-  # Public keys from `cistern keygen --out identity.txt` or `age-keygen`.
   recipients:
     - ${CISTERN_RECIPIENT}
-  # recipients_file: recipients.txt            # relative paths are resolved against this file
-  # identity_file: /etc/cistern/identity.txt   # only where you verify, restore or run incremental S3 jobs
 
 compression:
-  level: 6                                     # gzip 1-9, 0 = store uncompressed
+  level: 6
 
 metrics:
-  listen: ":9464"                              # daemon: /metrics, /healthz, /status
-  # pushgateway_url: http://pushgateway:9091   # one-shot commands push here
-  # textfile_dir: /var/lib/node_exporter/textfile
+  listen: ":9464"
 
 notify:
   webhooks:
     - url: ${SLACK_WEBHOOK_URL}
-      format: slack                            # slack | teams | telegram (needs chat_id) | json
-      on: [failure]                            # add success to be told about successful runs too
+      format: slack
+      on: [failure]
 
 scheduler:
   timezone: Asia/Ho_Chi_Minh
@@ -46,7 +35,6 @@ scheduler:
 defaults:
   repository: s3-main
   timeout: 6h
-  # GFS on finished_at in scheduler.timezone: last, hourly, daily, weekly, monthly, yearly.
   retention: { last: 3, daily: 7, weekly: 4, monthly: 6 }
   prune_after_backup: true
 
@@ -59,11 +47,11 @@ jobs:
       host: ${PGHOST}
       port: ${PGPORT:-5432}
       user: backup
-      password: ${PGPASSWORD}                  # passed to pg_dump as PGPASSWORD, never on the command line
+      password: ${PGPASSWORD}
       databases: [orders]
 
   - name: shop-db
-    driver: mysql                              # MySQL or MariaDB; credentials go through a 0600 option file
+    driver: mysql
     schedule: "30 2 * * *"
     params:
       host: ${MYSQL_HOST:-mysql}
@@ -72,10 +60,10 @@ jobs:
       databases: [shop]
 
   - name: uploads
-    driver: s3                                 # copy a bucket/prefix; incremental needs identity_file
+    driver: s3
     schedule: "0 3 * * *"
     params:
       endpoint: https://s3.ap-southeast-1.amazonaws.com
       region: ap-southeast-1
       bucket: app-uploads
-      prefix: uploads/                         # empty credentials = AWS_* environment variables
+      prefix: uploads/

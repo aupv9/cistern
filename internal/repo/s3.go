@@ -21,13 +21,11 @@ type S3Config struct {
 	PartSizeMB               int
 	CAFile                   string
 	InsecureSkipVerify       bool
-	LockMode                 string // GOVERNANCE | COMPLIANCE; rỗng = không khóa
+	LockMode                 string
 	LockDays                 int
 	Log                      *slog.Logger
 }
 
-// S3 lưu object trên S3/MinIO. Artifact và manifest được ghi kèm Object Lock (nếu cấu hình);
-// khóa job ghi bằng If-None-Match và không bị khóa, để còn giải phóng được.
 type S3 struct {
 	c        *s3.Client
 	lockMode string
@@ -35,7 +33,6 @@ type S3 struct {
 	now      func() time.Time
 }
 
-// Checker: repository tự kiểm tra được (dùng cho `cistern check`).
 type Checker interface {
 	Check(ctx context.Context) error
 }
@@ -63,7 +60,6 @@ func NewS3(cfg S3Config) (*S3, error) {
 	return &S3{c: c, lockMode: cfg.LockMode, lockDays: cfg.LockDays, now: time.Now}, nil
 }
 
-// Client trả về client S3 bên dưới (cho test).
 func (r *S3) Client() *s3.Client { return r.c }
 
 func (r *S3) retention() *s3.Retention {
@@ -113,7 +109,6 @@ func (r *S3) Delete(ctx context.Context, key string) error {
 	return r.c.DeleteObject(ctx, key)
 }
 
-// Check: bucket truy cập được; nếu cấu hình Object Lock thì bucket phải bật Object Lock.
 func (r *S3) Check(ctx context.Context) error {
 	if err := r.c.Probe(ctx, ""); err != nil {
 		return err

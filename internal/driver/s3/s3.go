@@ -1,24 +1,3 @@
-// Package s3 là driver "s3" (FR-12): sao chép object của một bucket/prefix S3-compatible, incremental
-// theo ETag.
-//
-// Mỗi object là một artifact riêng (objects/<sha256(key)>), để restore một object nhanh. index.json
-// liệt kê mọi object (key, ETag, kích thước, Content-Type, artifact, snapshot giữ dữ liệu). Lần sau,
-// object có ETag và kích thước không đổi không được sao chép lại mà trỏ sang snapshot đang giữ dữ liệu
-// của nó; các snapshot đó nằm trong depends_on nên retention giữ chúng. Đọc index của lần trước cần
-// private key (encryption.identity_file); không có thì sao chép đầy đủ.
-//
-// Tham số:
-//
-//	endpoint, region, bucket, prefix, path_style       nguồn
-//	access_key_id, secret_access_key, session_token   (trống = biến AWS_*)
-//	ca_file, insecure_skip_verify, part_size_mb       TLS; kích thước part khi restore
-//	full            true = luôn sao chép đầy đủ
-//	restore_bucket  bucket đích khi restore (mặc định bucket nguồn)
-//	restore_prefix  thay prefix nguồn bằng prefix này khi restore (vd. restored/)
-//	only            chỉ restore các key bắt đầu bằng chuỗi này
-//	overwrite       cho phép ghi đè object đã có ở đích
-//
-// Chỉ giữ nội dung và Content-Type; metadata khác (x-amz-meta-*, tag, ACL) không được sao chép.
 package s3
 
 import (
@@ -62,7 +41,7 @@ type Entry struct {
 	LastModified time.Time `json:"last_modified"`
 	ContentType  string    `json:"content_type,omitempty"`
 	Artifact     string    `json:"artifact"`
-	Snapshot     string    `json:"snapshot,omitempty"` // rỗng = snapshot chứa index này
+	Snapshot     string    `json:"snapshot,omitempty"`
 }
 
 type Index struct {
@@ -128,7 +107,6 @@ func (d *Driver) client(bucket string) (*s3c.Client, error) {
 	})
 }
 
-// artifactName: key S3 có thể chứa mọi ký tự, nên artifact đặt theo SHA-256 của key.
 func artifactName(key string) string {
 	h := sha256.Sum256([]byte(key))
 	x := hex.EncodeToString(h[:])
@@ -143,7 +121,6 @@ func (d *Driver) Check(ctx context.Context) error {
 	return c.Probe(ctx, d.prefix)
 }
 
-// previous đọc index của snapshot trước; trả về lý do khi phải sao chép đầy đủ.
 func (d *Driver) previous(sink driver.Sink) (map[string]Entry, string, string) {
 	if d.full {
 		return nil, "", "full (full=true)"
@@ -239,7 +216,7 @@ func (d *Driver) Backup(ctx context.Context, sink driver.Sink) (driver.Info, err
 }
 
 func (d *Driver) copyObject(ctx context.Context, c *s3c.Client, sink driver.Sink, o s3c.ObjectInfo) (Entry, error) {
-	// If-Match: object bị sửa sau khi liệt kê thì báo lỗi thay vì lưu bản lẫn lộn.
+
 	rc, meta, err := c.GetObjectWith(ctx, o.Key, s3c.GetOptions{IfMatch: o.ETag})
 	if errors.Is(err, s3c.ErrPreconditionFailed) {
 		return Entry{}, fmt.Errorf("object %q changed during backup; run the job again", o.Key)

@@ -1,4 +1,3 @@
-// Package daemon: scheduler và HTTP /metrics, /healthz, /status.
 package daemon
 
 import (
@@ -12,9 +11,9 @@ import (
 )
 
 type Options struct {
-	Listen   string        // mặc định :9464
-	Grace    time.Duration // thời gian chờ job đang chạy khi nhận SIGTERM, mặc định 5 phút
-	Metrics  http.Handler  // /metrics
+	Listen   string
+	Grace    time.Duration
+	Metrics  http.Handler
 	Status   func() map[string]any
 	Tasks    []Task
 	Runner   Runner
@@ -22,8 +21,6 @@ type Options struct {
 	Log      *slog.Logger
 }
 
-// Run phục vụ HTTP và chạy lịch tới khi ctx bị hủy. Khi dừng: tắt HTTP, chờ job đang chạy
-// trong thời gian Grace, quá hạn thì hủy chúng.
 func Run(ctx context.Context, opt Options) error {
 	if opt.Listen == "" {
 		opt.Listen = ":9464"
@@ -57,7 +54,6 @@ func Run(ctx context.Context, opt Options) error {
 	go func() { errc <- srv.ListenAndServe() }()
 	opt.Log.Info("daemon started", "listen", opt.Listen, "tasks", len(opt.Tasks))
 
-	// Job chạy trên context riêng để không bị hủy ngay khi nhận SIGTERM.
 	jobCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
 	loopCtx, stopLoop := context.WithCancel(ctx)

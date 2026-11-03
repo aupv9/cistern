@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// AWS Signature Version 4 cho S3 (https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html).
-
 const (
 	algorithm       = "AWS4-HMAC-SHA256"
 	amzDateFormat   = "20060102T150405Z"
@@ -28,7 +26,6 @@ type Credentials struct {
 	SessionToken    string
 }
 
-// uriEncode: giữ A-Z a-z 0-9 - _ . ~ (và '/' khi encodeSlash=false), còn lại %XX chữ hoa.
 func uriEncode(s string, encodeSlash bool) string {
 	var sb strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -43,7 +40,6 @@ func uriEncode(s string, encodeSlash bool) string {
 	return sb.String()
 }
 
-// canonicalQuery cũng là query string thật gửi đi, nên chữ ký và yêu cầu luôn khớp.
 func canonicalQuery(q url.Values) string {
 	keys := make([]string, 0, len(q))
 	for k := range q {
@@ -116,8 +112,6 @@ func signature(req *http.Request, signed []string, payloadHash, region string, c
 	return hex.EncodeToString(hmacSHA256(k, sts)), scope
 }
 
-// Sign đặt X-Amz-Date, X-Amz-Content-Sha256, X-Amz-Security-Token (nếu có) và Authorization.
-// Ký host và mọi header đang có trên req (trừ Authorization, User-Agent).
 func Sign(req *http.Request, cred Credentials, region, payloadHash string, t time.Time) {
 	req.Header.Set("X-Amz-Date", t.UTC().Format(amzDateFormat))
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
@@ -138,7 +132,6 @@ func Sign(req *http.Request, cred Credentials, region, payloadHash string, t tim
 		algorithm, cred.AccessKeyID, scope, strings.Join(signed, ";"), sig))
 }
 
-// Verify kiểm chữ ký của một yêu cầu đã nhận (dùng trong server giả để bắt lỗi chính tắc hóa).
 func Verify(req *http.Request, cred Credentials, region string) error {
 	auth := req.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, algorithm+" ") {

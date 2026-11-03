@@ -30,10 +30,10 @@ the S3 client and repository are tested against an in-memory S3 server
 
 | Target | What it runs |
 | --- | --- |
-| `postgres` | PostgreSQL 16, local repository, scheduled daemon, metrics, manual recovery with `age` |
-| `s3` | PostgreSQL 16, S3 repository on MinIO with Object Lock, checked with the AWS CLI |
-| `mysql` | MySQL 8.4, local repository |
-| `mariadb` | MariaDB 11.4, local repository, manual recovery with `age` |
+| `postgres` | PostgreSQL 16.15, local repository, scheduled daemon, metrics, manual recovery with `age` |
+| `s3` | PostgreSQL 16.15, S3 repository on MinIO RELEASE.2026-10-23T20-06-51Z with Object Lock, checked with AWS CLI 2.39.3 |
+| `mysql` | MySQL 8.4.13, local repository |
+| `mariadb` | MariaDB 11.4.13, local repository, manual recovery with `age` |
 | `s3-driver` | S3 driver against MinIO, incremental backups, S3 repository with Object Lock |
 
 ```sh
@@ -42,9 +42,17 @@ the S3 client and repository are tested against an in-memory S3 server
 ```
 
 Images can be overridden with `PG_IMAGE`, `MYSQL_IMAGE`, `MARIADB_IMAGE`, `MINIO_IMAGE` and
-`AWS_CLI_IMAGE`. All images are pinned to an exact version and digest so CI does not change with
-upstream releases; to update them, see the comment above the defaults in `scripts/e2e-local.sh`. The script
-removes its containers and volumes when it exits.
+`AWS_CLI_IMAGE`. The script removes its containers and volumes when it exits.
+
+All images are pinned to an exact version and multi-arch digest, so CI does not change with upstream
+releases. To move to a newer image:
+
+1. look up its digest with `docker buildx imagetools inspect <image:tag>`;
+2. run the affected targets with the new image, for example
+   `PG_IMAGE=postgres:16.16@sha256:… ./scripts/e2e-local.sh postgres s3`;
+3. update the default in `scripts/e2e-local.sh`.
+
+MinIO is pinned by digest only, because Chainguard publishes only a `latest` tag for free.
 
 CI runs every target as a separate job after the unit tests pass
 ([.github/workflows/ci.yaml](.github/workflows/ci.yaml)).
@@ -115,9 +123,6 @@ writes artifacts to the `Sink` and reads them from the `Source`. Then:
   (under *Unreleased*).
 - Write commit messages in the imperative mood with a short summary line, followed by what changed
   and why.
-
-Code comments in the existing code base are mostly in Vietnamese; new comments may be written in
-English.
 
 ## License
 

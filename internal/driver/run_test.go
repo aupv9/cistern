@@ -32,7 +32,7 @@ func TestRunTimeoutKillsGroup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	// Tiến trình con (sleep) nằm trong cùng group, phải bị giết cùng.
+
 	err := Run(ctx, Command{Name: "sh", Args: []string{"-c", "sleep 30 & sleep 30; wait"}})
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)

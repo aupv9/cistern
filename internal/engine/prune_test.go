@@ -22,7 +22,6 @@ import (
 	"cistern/internal/metrics"
 )
 
-// forgetDriver: như fakeDriver nhưng có dữ liệu "ngoài repository" (giống Elasticsearch).
 type forgetDriver struct {
 	fakeDriver
 }
@@ -172,7 +171,7 @@ func TestPruneIncompleteAndNoPolicy(t *testing.T) {
 	if list, _ := e.List(ctx, "app"); len(list) != 2 {
 		t.Errorf("no policy must keep everything, got %d", len(list))
 	}
-	if rep.Kept != 3 { // 2 hoàn tất + 1 bản dở còn mới
+	if rep.Kept != 3 {
 		t.Errorf("report: %+v", rep)
 	}
 }
@@ -194,7 +193,6 @@ func TestPruneAfterBackupAndForget(t *testing.T) {
 		t.Fatalf("forgotten: %v", forgotten)
 	}
 
-	// Forget lỗi → snapshot được giữ, prune báo lỗi.
 	e.Cfg.Jobs[0].Params["forget_fail"] = strconv.Itoa(start + 3)
 	e.Cfg.Jobs[0].Retention.Last = 1
 	rep, err := e.Prune(ctx, "app", false)
@@ -251,7 +249,6 @@ notify:
 	ctx := context.Background()
 	prom := filepath.Join(textDir, "cistern_app.prom")
 
-	// Lỗi: failure metrics + webhook failure.
 	if _, err := e.Backup(ctx, "app"); err == nil {
 		t.Fatal("expected failure")
 	}
@@ -263,7 +260,6 @@ notify:
 		t.Fatalf("events: %v", hooks.events)
 	}
 
-	// Thành công: success metrics, kích thước, failure cũ vẫn còn trong textfile.
 	e.Cfg.Jobs[0].Params["fail_on"] = ""
 	c.t = c.t.Add(time.Hour)
 	m, err := e.Backup(ctx, "app")
@@ -286,7 +282,6 @@ notify:
 		t.Fatalf("events: %v", hooks.events)
 	}
 
-	// Verify thành công cập nhật verify_last_success.
 	if _, err := e.Verify(ctx, "app", "latest"); err != nil {
 		t.Fatal(err)
 	}

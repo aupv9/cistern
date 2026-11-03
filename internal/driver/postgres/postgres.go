@@ -1,22 +1,3 @@
-// Package postgres là driver "postgres" (FR-03): pg_dump định dạng custom cho từng database,
-// pg_dumpall --globals-only cho role và tablespace; restore bằng pg_restore.
-//
-// Artifact:
-//
-//	db/<database>.dump   pg_dump --format=custom
-//	globals.sql          pg_dumpall --globals-only (khi globals=true)
-//
-// Tham số (params trong job, ghi đè lúc restore bằng --set):
-//
-//	host, port, user, password, sslmode   kết nối (truyền qua biến PG*, không qua đối số lệnh)
-//	maintenance_db     database dùng để liệt kê/tạo database (mặc định postgres)
-//	databases          danh sách cách nhau bởi dấu phẩy; trống = mọi database cho phép kết nối
-//	globals            dump role/tablespace (mặc định true)
-//	no_role_passwords  thêm --no-role-passwords cho pg_dumpall (cho dịch vụ managed)
-//	restore_suffix     hậu tố tên database đích khi restore (vd. _restored)
-//	clean              cho phép restore đè database đã tồn tại (--clean --if-exists)
-//	no_owner           pg_restore --no-owner --no-privileges
-//	restore_globals    chạy globals.sql khi restore (mặc định false)
 package postgres
 
 import (
@@ -116,7 +97,6 @@ func parseBool(s string, def bool) (bool, error) {
 
 func (pg *Postgres) Name() string { return "postgres" }
 
-// env: thông tin kết nối qua biến môi trường libpq, giữ mật khẩu ngoài dòng lệnh (NFR-02).
 func (pg *Postgres) env() []string {
 	e := []string{"PGAPPNAME=cistern", "PGCONNECT_TIMEOUT=15"}
 	for k, v := range map[string]string{"PGHOST": pg.host, "PGPORT": pg.port, "PGUSER": pg.user, "PGPASSWORD": pg.password, "PGSSLMODE": pg.sslmode} {
@@ -138,7 +118,6 @@ func (pg *Postgres) hostLabel() string {
 	return h
 }
 
-// psql chạy một script qua stdin để dùng biến :'name' / :"name" (psql tự quote, tránh SQL injection).
 func (pg *Postgres) psql(ctx context.Context, db, script string, vars map[string]string) (string, error) {
 	args := []string{"-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "--no-password", "-d", db}
 	keys := make([]string, 0, len(vars))
@@ -178,7 +157,7 @@ func (pg *Postgres) versions(ctx context.Context) (client, server string, err er
 	if err != nil {
 		return "", "", err
 	}
-	// pg_dump cũ hơn server sẽ lỗi; dump mới có thể không restore lên bản cũ → ghi cả hai vào manifest.
+
 	if cm < sm {
 		return "", "", fmt.Errorf("pg_dump %s is older than server %s: install a client with major version >= %d", client, server, sm)
 	}
@@ -220,7 +199,7 @@ func (pg *Postgres) targetDatabases(ctx context.Context) ([]string, error) {
 }
 
 func artifactName(db string) (string, error) {
-	// Tên database dùng làm tên artifact và truyền cho -d; "=" khiến libpq hiểu là chuỗi kết nối.
+
 	name := dbPrefix + db + dbSuffix
 	if strings.Contains(db, "=") || manifest.ValidateArtifactName(name) != nil {
 		return "", fmt.Errorf("database name %q is not supported (allowed: A-Z a-z 0-9 . _ @ + -)", db)
@@ -297,7 +276,7 @@ func (pg *Postgres) dumpTo(ctx context.Context, sink driver.Sink, name string, c
 	c.Env = pg.env()
 	c.Stdout = w
 	if err := pg.run(ctx, c); err != nil {
-		return err // engine hủy artifact đang mở
+		return err
 	}
 	return w.Close()
 }
@@ -389,7 +368,7 @@ func (pg *Postgres) restoreDB(ctx context.Context, src driver.Source, artifact, 
 	}
 	if err := pg.pgRestore(ctx, src, artifact, target); err != nil {
 		if created {
-			// Database do chính lần restore này tạo: xóa bản dở dang để lần thử lại không bị "already exists".
+
 			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 			defer cancel()
 			if _, derr := pg.psql(dctx, pg.maintDB, "DROP DATABASE IF EXISTS :\"name\";\n", map[string]string{"name": target}); derr != nil {
@@ -418,6 +397,6 @@ func (pg *Postgres) pgRestore(ctx context.Context, src driver.Source, artifact, 
 		driver.Abort(rc)
 		return err
 	}
-	// Close đọc nốt phần còn lại và kiểm checksum (NFR-03).
+
 	return rc.Close()
 }

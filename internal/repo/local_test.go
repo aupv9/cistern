@@ -21,7 +21,6 @@ func (f *failingReader) Read(p []byte) (int, error) {
 	return copy(p, "data"), nil
 }
 
-// testContract kiểm hành vi chung mà engine dựa vào, cho mọi hiện thực Repository.
 func testContract(t *testing.T, r Repository) {
 	ctx := context.Background()
 	if err := r.Put(ctx, "job/s1/manifest.json", strings.NewReader("{}")); err != nil {
@@ -40,7 +39,6 @@ func testContract(t *testing.T, r Repository) {
 		t.Fatalf("got %q", b)
 	}
 
-	// Put thất bại giữa chừng: không để lại key.
 	if err := r.Put(ctx, "job/s1/artifacts/bad", &failingReader{n: 3}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -89,7 +87,7 @@ func TestLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	testContract(t, l)
-	// Không để lại file tạm hay thư mục rỗng.
+
 	if entries, _ := os.ReadDir(l.Root); len(entries) != 0 {
 		t.Fatalf("root not empty: %v", entries)
 	}
