@@ -3,7 +3,9 @@ kind: NetworkPolicy
 metadata:
   name: cistern
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cistern
   policyTypes: ["Ingress"]
   ingress:
     - ports:
