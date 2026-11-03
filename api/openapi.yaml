@@ -1,0 +1,718 @@
+openapi: 3.1.0
+info:
+  title: Cistern Admin API
+  version: "1"
+  description: |
+    API served by `cistern server` for the Admin UI. Every endpoint except the auth redirects
+    requires a session cookie. Every non-GET request also requires the header
+    `X-Cistern-CSRF` with the `csrf_token` from `GET /api/v1/me` (403 `csrf` otherwise); a request
+    with a body must send `Content-Type: application/json` (415 `invalid` otherwise).
+    The session cookie is `__Host-cistern_session`; with `--insecure-dev-login` it is `cistern_session`.
+    Times are RFC 3339 in UTC. Sizes are bytes. Durations are milliseconds.
+    Secrets (passwords, S3 credentials, private keys, tokens) never appear in any response.
+servers:
+  - url: /api/v1
+security:
+  - session: []
+tags:
+  - name: auth
+  - name: jobs
+  - name: runs
+  - name: restore
+  - name: approvals
+  - name: audit
+paths:
+  /auth/login:
+    get:
+      tags: [auth]
+      security: []
+      summary: Start single sign-on
+      parameters:
+        - { name: return_to, in: query, required: false, schema: { type: string }, description: "Path inside the UI to return to, must start with /" }
+      responses:
+        "302": { description: "Redirect to the identity provider, or to /denied?reason=idp_unavailable|sso_not_configured" }
+  /auth/callback:
+    get:
+      tags: [auth]
+      security: []
+      summary: OIDC redirect target; sets the session cookie and redirects to return_to
+      description: |
+        Always answers with a redirect. On success it goes to return_to. Otherwise it goes to
+        `/denied?reason=R`, where R is `no_role` (signed in, but no group of the user maps to a role;
+        audited as auth.denied), `login_failed`, `login_expired` or `idp_unavailable`.
+      responses:
+        "302": { description: "Redirect into the UI, or to /denied?reason=..." }
+  /auth/dev-login:
+    get:
+      tags: [auth]
+      security: []
+      summary: Development only (cistern server --insecure-dev-login); 404 otherwise
+      description: Creates a session without single sign-on. Roles are expanded like real ones.
+      parameters:
+        - { name: email, in: query, required: false, schema: { type: string, default: dev@localhost } }
+        - { name: name, in: query, required: false, schema: { type: string } }
+        - { name: sub, in: query, required: false, schema: { type: string }, description: "Default: dev:<email>" }
+        - { name: roles, in: query, required: false, schema: { type: string, default: admin }, description: "Comma separated Role values" }
+        - { name: return_to, in: query, required: false, schema: { type: string }, description: "If set, redirect there instead of returning Me" }
+      responses:
+        "200":
+          description: Signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Me" } } }
+        "302": { description: Signed in, redirect to return_to }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: End the session
+      responses:
+        "204": { description: Signed out }
+  /me:
+    get:
+      tags: [auth]
+      summary: Current user, roles and CSRF token
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Me" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "forbidden: signed in, but the user has no role; the UI shows /denied"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  /overview:
+    get:
+      tags: [jobs]
+      summary: Everything the overview page needs in one call
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Overview" } } }
+  /jobs/{job}:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    get:
+      tags: [jobs]
+      summary: Job detail
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/JobDetail" } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/snapshots:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    get:
+      tags: [jobs]
+      summary: Completed snapshots, newest first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, required: [snapshots], properties: { snapshots: { type: array, items: { $ref: "#/components/schemas/SnapshotSummary" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/snapshots/{snapshot}:
+    parameters:
+      - { $ref: "#/components/parameters/Job" }
+      - { name: snapshot, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [jobs]
+      summary: Snapshot manifest
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Manifest" } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/snapshots/{snapshot}/manifest.json:
+    parameters:
+      - { $ref: "#/components/parameters/Job" }
+      - { name: snapshot, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [jobs]
+      summary: The stored manifest.json bytes, as a download (Content-Disposition attachment)
+      responses:
+        "200":
+          description: File download
+          content: { application/json: {} }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/runs:
+    parameters:
+      - { $ref: "#/components/parameters/Job" }
+      - { name: op, in: query, required: false, schema: { $ref: "#/components/schemas/Op" } }
+      - { name: limit, in: query, required: false, schema: { type: integer, default: 30, maximum: 200 } }
+    get:
+      tags: [runs]
+      summary: Run history of a job, newest first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, required: [runs], properties: { runs: { type: array, items: { $ref: "#/components/schemas/Run" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/backup:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [runs]
+      summary: Run a backup now (operator)
+      responses:
+        "202":
+          description: Accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/RunRef" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/verify:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [runs]
+      summary: Verify a snapshot now (operator)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { snapshot: { type: string, default: latest } } }
+      responses:
+        "202":
+          description: Accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/RunRef" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/restore/preview:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [restore]
+      summary: Resolve a restore without running it (restorer)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RestoreInput" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/RestorePreview" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /jobs/{job}/restore:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [restore]
+      summary: Start a restore, or request approval when the target is production (restorer)
+      description: |
+        A production target always creates an approval request, also for admins; it does not need the
+        daemon until it is approved. A non-production target starts the restore at once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/RestoreInput" }
+                - type: object
+                  required: [reason, confirm_job]
+                  properties:
+                    reason: { type: string, minLength: 3, maxLength: 500 }
+                    confirm_job: { type: string, description: "Must equal the job name" }
+      responses:
+        "202":
+          description: Started, or waiting for approval
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [needs_approval]
+                properties:
+                  needs_approval: { type: boolean }
+                  run_id: { type: string }
+                  approval_id: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /runs:
+    get:
+      tags: [runs]
+      summary: Runs started from the UI that are queued or running
+      description: With active=false, all UI runs the daemon still remembers (up to 24 hours). Empty when the daemon is unavailable.
+      parameters:
+        - { name: active, in: query, required: false, schema: { type: boolean, default: true } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, required: [runs], properties: { runs: { type: array, items: { $ref: "#/components/schemas/Run" } } } }
+  /runs/{run}:
+    parameters: [{ name: run, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [runs]
+      summary: One run; the UI polls this every 2 seconds while state is queued or running
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /approvals:
+    get:
+      tags: [approvals]
+      parameters:
+        - { name: state, in: query, required: false, schema: { type: string, enum: [pending, decided, all], default: all } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          description: OK, newest first
+          content:
+            application/json:
+              schema: { type: object, required: [approvals], properties: { approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } } } }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /approvals/{approval}:
+    parameters: [{ $ref: "#/components/parameters/Approval" }]
+    get:
+      tags: [approvals]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /approvals/{approval}/approve:
+    parameters: [{ $ref: "#/components/parameters/Approval" }]
+    post:
+      tags: [approvals]
+      summary: Approve and start the restore (approver or admin, not the requester)
+      description: |
+        409 when the request is no longer pending, the snapshot or target no longer exists, or the job
+        already has a running operation. 503 when the daemon is unavailable (nothing is recorded then).
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { note: { type: string, maxLength: 500 } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /approvals/{approval}/reject:
+    parameters: [{ $ref: "#/components/parameters/Approval" }]
+    post:
+      tags: [approvals]
+      summary: Reject (approver or admin, not the requester)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [note], properties: { note: { type: string, minLength: 3, maxLength: 500 } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /audit:
+    get:
+      tags: [audit]
+      summary: Audit entries, newest first
+      parameters:
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time }, description: "Default: 7 days ago" }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time }, description: "Default: now" }
+        - { name: action, in: query, required: false, schema: { $ref: "#/components/schemas/AuditAction" } }
+        - { name: job, in: query, required: false, schema: { type: string } }
+        - { name: result, in: query, required: false, schema: { $ref: "#/components/schemas/AuditResult" } }
+        - { name: q, in: query, required: false, schema: { type: string }, description: "Substring match on actor email or name, job, snapshot" }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 500 } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
+                  next_cursor: { type: string, description: "Absent on the last page" }
+                  total: { type: integer, description: "Entries matching the filters; only on the first page (no cursor) and only up to 10000, otherwise absent" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /audit/export:
+    get:
+      tags: [audit]
+      summary: Download audit entries; same filters as /audit, no paging
+      parameters:
+        - { name: format, in: query, required: false, schema: { type: string, enum: [csv, jsonl], default: csv } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time }, description: "Default: 7 days ago" }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time }, description: "Default: now" }
+        - { name: action, in: query, required: false, schema: { $ref: "#/components/schemas/AuditAction" } }
+        - { name: job, in: query, required: false, schema: { type: string } }
+        - { name: result, in: query, required: false, schema: { $ref: "#/components/schemas/AuditResult" } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: File download with Content-Disposition attachment
+          content:
+            text/csv: {}
+            application/x-ndjson: {}
+        "422": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: __Host-cistern_session }
+  parameters:
+    Job: { name: job, in: path, required: true, schema: { type: string } }
+    Approval: { name: approval, in: path, required: true, schema: { type: string } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [unauthenticated, forbidden, not_found, conflict, invalid, daemon_unavailable, csrf, internal]
+            message: { type: string, description: "Safe to show to the user" }
+            fields: { type: object, additionalProperties: { type: string }, description: "Per-field messages for invalid" }
+    Role:
+      type: string
+      enum: [viewer, operator, restorer, approver, admin]
+      description: "viewer < operator < restorer < admin are cumulative; approver is separate"
+    Me:
+      type: object
+      required: [user, roles, csrf_token, session_expires_at, deployment]
+      properties:
+        user:
+          type: object
+          required: [id, email, name]
+          properties:
+            id: { type: string }
+            email: { type: string }
+            name: { type: string }
+        roles: { type: array, items: { $ref: "#/components/schemas/Role" }, description: "Effective roles, already expanded (an admin lists viewer, operator, restorer, admin; an approver lists viewer, approver). Admins may also decide approvals; use Approval.can_decide." }
+        csrf_token: { type: string }
+        session_expires_at: { type: string, format: date-time }
+        deployment: { $ref: "#/components/schemas/Deployment" }
+    Deployment:
+      type: object
+      required: [name, version, timezone, daemon]
+      properties:
+        name: { type: string, description: "server.name, e.g. production" }
+        version: { type: string }
+        timezone: { type: string, description: "IANA zone of the scheduler, e.g. Asia/Ho_Chi_Minh" }
+        daemon:
+          type: object
+          required: [configured, reachable]
+          properties:
+            configured: { type: boolean, description: "False means the UI is read-only" }
+            reachable: { type: boolean }
+            version: { type: string }
+    Op:
+      type: string
+      enum: [backup, verify, restore, prune]
+    RunState:
+      type: string
+      enum: [queued, running, succeeded, failed, unknown]
+      description: "unknown: the daemon restarted or lost the run"
+    JobHealth:
+      type: string
+      enum: [healthy, failing, running, stale, verify_overdue, never_run]
+      description: |
+        Precedence: running > failing > stale > verify_overdue > healthy.
+        failing: last backup failure newer than last success. stale: no success for 36 h.
+        verify_overdue: job has verify_schedule and no successful verify for 8 days.
+    RunPoint:
+      type: object
+      required: [status, started_at]
+      properties:
+        id: { type: string, description: "Run ID; absent for snapshots that have no run record (made before run records existed)" }
+        status: { $ref: "#/components/schemas/RunState" }
+        started_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+    Alert:
+      type: object
+      required: [kind, message, since]
+      properties:
+        kind: { type: string, enum: [backup_failing, backup_stale, verify_failing, verify_stale, daemon_unreachable] }
+        job: { type: string, description: "Absent for daemon_unreachable" }
+        message: { type: string }
+        since: { type: string, format: date-time }
+    JobSummary:
+      type: object
+      required: [name, driver, repository, health, snapshots, stored_bytes, recent_backups]
+      properties:
+        name: { type: string }
+        driver: { type: string }
+        source_label: { type: string, description: "Short non-secret description, e.g. PostgreSQL 16.4 from the newest manifest" }
+        repository: { type: string }
+        schedule: { type: string }
+        verify_schedule: { type: string }
+        health: { $ref: "#/components/schemas/JobHealth" }
+        running_op: { $ref: "#/components/schemas/Op" }
+        last_success: { type: string, format: date-time }
+        last_failure: { type: string, format: date-time }
+        last_failure_error: { type: string }
+        last_verify: { type: string, format: date-time }
+        next_run: { type: string, format: date-time }
+        snapshots: { type: integer }
+        stored_bytes: { type: integer, description: "Sum of stored sizes of all completed snapshots" }
+        recent_backups: { type: array, maxItems: 30, items: { $ref: "#/components/schemas/RunPoint" }, description: "Oldest first" }
+    Overview:
+      type: object
+      required: [generated_at, jobs, alerts, pending_approvals, recent_activity]
+      properties:
+        generated_at: { type: string, format: date-time }
+        jobs: { type: array, items: { $ref: "#/components/schemas/JobSummary" } }
+        alerts: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+        pending_approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
+        recent_activity: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/AuditEntry" } }
+        repositories:
+          type: array
+          items:
+            type: object
+            required: [name, type, stored_bytes]
+            properties:
+              name: { type: string }
+              type: { type: string, enum: [local, s3] }
+              stored_bytes: { type: integer }
+              object_lock: { $ref: "#/components/schemas/ObjectLock" }
+    ObjectLock:
+      type: object
+      required: [mode, days]
+      properties:
+        mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
+        days: { type: integer }
+    Retention:
+      type: object
+      properties:
+        last: { type: integer }
+        hourly: { type: integer }
+        daily: { type: integer }
+        weekly: { type: integer }
+        monthly: { type: integer }
+        yearly: { type: integer }
+    RestoreTarget:
+      type: object
+      required: [name, production]
+      properties:
+        name: { type: string }
+        description: { type: string, description: "Non-secret, e.g. staging-db.internal:5432" }
+        production: { type: boolean, description: "Restores into it need an approver" }
+    JobDetail:
+      allOf:
+        - { $ref: "#/components/schemas/JobSummary" }
+        - type: object
+          required: [retention, restore_targets, encryption, source]
+          properties:
+            retention: { $ref: "#/components/schemas/Retention" }
+            prune_after_backup: { type: boolean }
+            timeout_ms: { type: integer }
+            object_lock: { $ref: "#/components/schemas/ObjectLock" }
+            encryption:
+              type: object
+              required: [mode, recipients]
+              properties:
+                mode: { type: string, description: "age-x25519 or none" }
+                recipients: { type: integer }
+            source:
+              type: object
+              description: "Only non-secret parameters (host, port, database, databases, bucket, prefix, endpoint); never passwords or keys"
+              additionalProperties: { type: string }
+            restore_targets: { type: array, items: { $ref: "#/components/schemas/RestoreTarget" } }
+            current_run: { $ref: "#/components/schemas/Run" }
+    SnapshotSummary:
+      type: object
+      required: [id, started_at, finished_at, duration_ms, stored_bytes, plain_bytes, artifacts, kept_by]
+      properties:
+        id: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        stored_bytes: { type: integer }
+        plain_bytes: { type: integer }
+        artifacts: { type: integer }
+        depends_on: { type: array, items: { type: string } }
+        kept_by:
+          type: array
+          items: { type: string, enum: [last, hourly, daily, weekly, monthly, yearly, depends_on, no_policy] }
+          description: "Retention rules that keep it; depends_on: a kept snapshot needs it; no_policy: the job has no retention policy, so prune keeps everything; empty means the next prune removes it"
+        lock_until: { type: string, format: date-time, description: "Object Lock retain-until of the manifest, if any" }
+        last_verify:
+          type: object
+          required: [status, at]
+          properties:
+            status: { $ref: "#/components/schemas/RunState" }
+            at: { type: string, format: date-time }
+    Manifest:
+      type: object
+      description: "The snapshot's manifest.json as stored (format 1)"
+      required: [format, id, job, driver, status, started_at, finished_at, artifacts]
+      properties:
+        format: { type: integer }
+        id: { type: string }
+        job: { type: string }
+        driver: { type: string }
+        status: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        source:
+          type: object
+          properties:
+            version: { type: string }
+            host: { type: string }
+            extra: { type: object, additionalProperties: { type: string } }
+        compression: { type: string }
+        encryption: { type: string }
+        recipients: { type: array, items: { type: string } }
+        depends_on: { type: array, items: { type: string } }
+        artifacts:
+          type: array
+          items:
+            type: object
+            required: [name, path, plain_size, stored_size, plain_sha256, stored_sha256]
+            properties:
+              name: { type: string }
+              path: { type: string }
+              plain_size: { type: integer }
+              stored_size: { type: integer }
+              plain_sha256: { type: string }
+              stored_sha256: { type: string }
+        cistern_version: { type: string }
+        hostname: { type: string }
+    Actor:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, description: "OIDC subject, or 'scheduler' / 'cli'" }
+        email: { type: string }
+        name: { type: string }
+    Progress:
+      type: object
+      properties:
+        artifacts_done: { type: integer }
+        artifacts_total: { type: integer }
+        bytes_done: { type: integer }
+        bytes_total: { type: integer }
+    Run:
+      type: object
+      required: [id, job, op, state, trigger]
+      properties:
+        id: { type: string }
+        job: { type: string }
+        op: { $ref: "#/components/schemas/Op" }
+        state: { $ref: "#/components/schemas/RunState" }
+        trigger: { type: string, enum: [schedule, cli, ui] }
+        requested_by: { $ref: "#/components/schemas/Actor" }
+        approval_id: { type: string }
+        snapshot: { type: string, description: "Created (backup) or used (verify, restore)" }
+        target: { type: string, description: "Restore target name" }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        stored_bytes: { type: integer }
+        error: { type: string }
+        progress: { $ref: "#/components/schemas/Progress" }
+        log_tail: { type: array, maxItems: 200, items: { type: string }, description: "Last log lines of the run, newest last" }
+    RunRef:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string }
+    RestoreInput:
+      type: object
+      required: [snapshot, target]
+      properties:
+        snapshot: { type: string, description: "latest, a full ID or a unique prefix" }
+        target: { type: string, description: "Name of one of the job's restore_targets" }
+        restore_suffix:
+          type: string
+          pattern: "^(_[a-z0-9_]{1,30})?$"
+          description: |
+            Only for the postgres and mysql drivers (422 for others). Omitted: the target's own
+            restore_suffix, else _restored. Empty string: restore under the original database names.
+    RestorePreview:
+      type: object
+      required: [job, snapshot, target, needs_approval, overrides, cli_command]
+      properties:
+        job: { type: string }
+        snapshot: { $ref: "#/components/schemas/SnapshotSummary" }
+        target: { $ref: "#/components/schemas/RestoreTarget" }
+        needs_approval: { type: boolean }
+        overrides: { type: object, additionalProperties: { type: string }, description: "Non-secret --set values the restore will use" }
+        cli_command: { type: string, description: "Equivalent cistern restore command" }
+    ApprovalState:
+      type: string
+      enum: [pending, approved, rejected, expired]
+    Approval:
+      type: object
+      required: [id, state, job, snapshot, target, restore_suffix, reason, requested_by, requested_at, expires_at]
+      properties:
+        id: { type: string }
+        state: { $ref: "#/components/schemas/ApprovalState" }
+        job: { type: string }
+        snapshot: { type: string, description: "Full snapshot ID, resolved when requested" }
+        target: { $ref: "#/components/schemas/RestoreTarget" }
+        restore_suffix: { type: string }
+        reason: { type: string }
+        requested_by: { $ref: "#/components/schemas/Actor" }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        decided_by: { $ref: "#/components/schemas/Actor" }
+        decided_at: { type: string, format: date-time }
+        note: { type: string }
+        run_id: { type: string }
+        can_decide: { type: boolean, description: "True when the current user may approve or reject it" }
+    AuditAction:
+      type: string
+      enum:
+        - auth.login
+        - auth.denied
+        - auth.logout
+        - backup.run
+        - verify.run
+        - prune.run
+        - restore.run
+        - restore.request
+        - approval.approve
+        - approval.reject
+        - approval.expire
+        - run.finish
+        - access.denied
+    AuditResult:
+      type: string
+      enum: [accepted, succeeded, failed, denied, pending]
+    AuditEntry:
+      type: object
+      required: [id, time, actor, action, result]
+      properties:
+        id: { type: string }
+        time: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/Actor" }
+        roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        result: { $ref: "#/components/schemas/AuditResult" }
+        job: { type: string }
+        snapshot: { type: string }
+        target: { type: string }
+        run_id: { type: string }
+        approval_id: { type: string }
+        reason: { type: string }
+        params: { type: object, additionalProperties: { type: string }, description: "Non-secret parameters" }
+        error: { type: string }
+        source_ip: { type: string }
+        summary: { type: string, description: "One human-readable sentence" }

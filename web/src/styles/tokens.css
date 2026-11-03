@@ -1,0 +1,108 @@
+:root {
+  --font-sans: 'Geist Variable', Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --fill: #f2f2f2;
+  --hover: #fafafa;
+  --border: #eaeaea;
+  --border-2: #d4d4d4;
+  --fg: #171717;
+  --fg2: #666666;
+  --fg3: #8f8f8f;
+  --link: #0062d1;
+  --link-h: #004fa8;
+  --sel: #cde4ff;
+  --btn-bg: #171717;
+  --btn-fg: #ffffff;
+  --btn-h: #383838;
+  --ok: #2ea043;
+  --fail: #e5484d;
+  --fail-fg: #ca2a30;
+  --run: #0070f3;
+  --warn: #f5a623;
+  --err-bg: #fef0f0;
+  --err-bd: #f8cdcd;
+  --err-fg: #a51c24;
+  --wrn-bg: #fff6e5;
+  --wrn-bd: #ffdca8;
+  --wrn-fg: #7a4300;
+  --badge-bg: #ffefcf;
+  --badge-fg: #7a4300;
+  --bar: #c7c7c7;
+  --row-sel: #f2f7ff;
+  --ring: rgba(0, 0, 0, 0.06);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #000000;
+    --surface: #0a0a0a;
+    --fill: #1a1a1a;
+    --hover: #111111;
+    --border: #2e2e2e;
+    --border-2: #454545;
+    --fg: #ededed;
+    --fg2: #a1a1a1;
+    --fg3: #707070;
+    --link: #52a8ff;
+    --link-h: #85c1ff;
+    --sel: #0f3d6e;
+    --btn-bg: #ededed;
+    --btn-fg: #0a0a0a;
+    --btn-h: #cccccc;
+    --ok: #3fb95c;
+    --fail: #f2555a;
+    --fail-fg: #ff6b70;
+    --run: #3291ff;
+    --warn: #f5a623;
+    --err-bg: #1f0d0e;
+    --err-bd: #5c1f22;
+    --err-fg: #ff8a8e;
+    --wrn-bg: #1f1606;
+    --wrn-bd: #5a3e0e;
+    --wrn-fg: #f5b547;
+    --badge-bg: #3d2a06;
+    --badge-fg: #ffc96b;
+    --bar: #4a4a4a;
+    --row-sel: #0b1a2c;
+    --ring: rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --fill: #1a1a1a;
+  --hover: #111111;
+  --border: #2e2e2e;
+  --border-2: #454545;
+  --fg: #ededed;
+  --fg2: #a1a1a1;
+  --fg3: #707070;
+  --link: #52a8ff;
+  --link-h: #85c1ff;
+  --sel: #0f3d6e;
+  --btn-bg: #ededed;
+  --btn-fg: #0a0a0a;
+  --btn-h: #cccccc;
+  --ok: #3fb95c;
+  --fail: #f2555a;
+  --fail-fg: #ff6b70;
+  --run: #3291ff;
+  --warn: #f5a623;
+  --err-bg: #1f0d0e;
+  --err-bd: #5c1f22;
+  --err-fg: #ff8a8e;
+  --wrn-bg: #1f1606;
+  --wrn-bd: #5a3e0e;
+  --wrn-fg: #f5b547;
+  --badge-bg: #3d2a06;
+  --badge-fg: #ffc96b;
+  --bar: #4a4a4a;
+  --row-sel: #0b1a2c;
+  --ring: rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}

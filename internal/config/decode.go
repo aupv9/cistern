@@ -9,20 +9,20 @@ import (
 	"time"
 )
 
-func expandEnv(n *node, lookup func(string) (string, bool)) error {
+func expandEnv(n *node, lookup func(string) (string, bool), path string, lenient func(string) bool) error {
 	if n == nil {
 		return nil
 	}
 	switch n.kind {
 	case scalarNode:
-		v, err := expandString(n.value, lookup)
+		v, err := expandString(n.value, lookup, lenient(path))
 		if err != nil {
 			return errAt(n.line, "%v", err)
 		}
 		n.value = v
 	case sequenceNode:
 		for _, it := range n.items {
-			if err := expandEnv(it, lookup); err != nil {
+			if err := expandEnv(it, lookup, path, lenient); err != nil {
 				return err
 			}
 		}
@@ -31,7 +31,7 @@ func expandEnv(n *node, lookup func(string) (string, bool)) error {
 			if k == "hooks" {
 				continue
 			}
-			if err := expandEnv(n.m[k], lookup); err != nil {
+			if err := expandEnv(n.m[k], lookup, join(path, k), lenient); err != nil {
 				return err
 			}
 		}
@@ -39,7 +39,7 @@ func expandEnv(n *node, lookup func(string) (string, bool)) error {
 	return nil
 }
 
-func expandString(s string, lookup func(string) (string, bool)) (string, error) {
+func expandString(s string, lookup func(string) (string, bool), lenient bool) (string, error) {
 	var sb strings.Builder
 	for {
 		i := strings.Index(s, "${")
@@ -61,7 +61,7 @@ func expandString(s string, lookup func(string) (string, bool)) (string, error) 
 		switch {
 		case hasDef && v == "":
 			v = def
-		case !ok:
+		case !ok && !lenient:
 			return "", fmt.Errorf("environment variable %s is not set and has no default", name)
 		}
 		sb.WriteString(v)

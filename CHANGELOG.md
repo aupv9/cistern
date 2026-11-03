@@ -18,11 +18,42 @@ All notable changes to this project are documented in this file. The format is b
 - End-to-end target `image` and `scripts/e2e-k8s.sh` (k3d), both run in CI.
 - Images published to `ghcr.io/aupv9/cistern` (`linux/amd64`, `linux/arm64`) by CI after all tests
   pass: `main` and `sha-<commit>` for `main`, `vX.Y` and `latest` for release tags.
+- **Admin UI**: `cistern server` serves a web UI and the REST API in `api/openapi.yaml`: overview
+  with health and alerts, job details, snapshots, run history with live progress and log tail,
+  backups, verifies and restores from the browser. OIDC sign-in (code flow with PKCE, RS256/ES256),
+  group-to-role mapping (`viewer`, `operator`, `restorer`, `approver`, `admin`), encrypted session
+  cookies with absolute and idle timeouts, CSRF header, strict CSP with hashed inline scripts. The
+  server holds no private key; `--insecure-dev-login` for local development. See
+  [docs/admin-ui.md](docs/admin-ui.md).
+- Daemon internal API (`/internal/v1/runs`, enabled by `daemon.api_token`): the server's
+  operations run through the same engine path as scheduled ones; `/status` adds `running`,
+  `timezone` and `api`.
+- Run records: every backup, verify, restore and prune, from the CLI, a schedule or the UI, writes
+  `<prefix>/_admin/runs/<job>/<id>.json`.
+- `jobs[].restore_targets`: named restore destinations; the UI can restore only into these (plus
+  `restore_suffix`). Restores into production targets need an approval by someone else, stored under
+  `<prefix>/_admin/approvals/`.
+- Append-only audit log in the repository (`<prefix>/_admin/audit/`, one object per entry, Object
+  Lock retention `server.audit_retention_days`), also written to stdout as JSON lines; filters,
+  paging and CSV/JSON Lines export.
+- `make dev-ui` (`scripts/dev-ui.sh`): one command for a local UI backend with seeded history;
+  `make ui`, `make build-ui`.
+- `deploy/k8s/server` kustomization for the Admin UI; the daemon reads `CISTERN_DAEMON_TOKEN` from
+  the optional Secret `cistern-daemon-token`.
+- CI: a `web` job (lint, typecheck, test, build) that the image depends on, and the `server`
+  end-to-end target (`scripts/e2e/server.sh`).
 
 ### Changed
 
 - `deploy/k8s` is split into `base`, `cronjob` and `monitoring`; the previous single CronJob and
   kustomization are removed.
+- The Dockerfile builds the UI in a `node:22.23.4-alpine` stage pinned by digest and embeds it with
+  `-tags ui`; the image exposes port 8443 as well.
+- `--config FILE` is accepted as an alias of `-c FILE`.
+- Environment expansion is process-specific: an unset `${VAR}` in a section a process does not use
+  expands to an empty string (for example, the server needs no database passwords and the daemon no
+  session key). See [Configuration](docs/configuration.md#environment-variables).
+- Local repositories list only the directory of the requested prefix instead of the whole tree.
 
 ## [0.2] - 2026-11-03
 

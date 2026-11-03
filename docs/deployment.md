@@ -10,6 +10,9 @@ Cistern is one binary with two ways to run:
 Both use the same configuration and the same repository, so you can switch modes or mix them (for
 example, a daemon for backups and a separate CronJob with prune credentials).
 
+The optional [Admin UI](admin-ui.md) is a third process, `cistern server`. It holds no private key
+and sends every operation to the daemon, so it needs daemon mode.
+
 ## Container image
 
 The [Dockerfile](../Dockerfile) builds a multi-architecture image (`linux/amd64`, `linux/arm64`):
@@ -17,13 +20,14 @@ The [Dockerfile](../Dockerfile) builds a multi-architecture image (`linux/amd64`
 | | |
 | --- | --- |
 | Base | `oraclelinux:9-slim` |
-| Cistern | static binary with embedded time zone data, `/usr/local/bin/cistern` |
+| Cistern | static binary with embedded time zone data and the Admin UI, `/usr/local/bin/cistern` |
 | PostgreSQL client | `pg_dump`, `pg_dumpall`, `pg_restore`, `psql` from the PGDG repository, major version `PG_MAJOR` (default `16`) |
 | MySQL client | `mysqldump`, `mysql` 8.4 LTS from the MySQL repository; also used for MariaDB servers |
 | User | UID/GID `10001`, no shell login, `HOME=/tmp` |
-| Defaults | `ENTRYPOINT ["cistern"]`, `CMD ["daemon"]`, `CISTERN_CONFIG=/etc/cistern/cistern.yaml`, `CISTERN_TMPDIR=/tmp`, port `9464` |
+| Defaults | `ENTRYPOINT ["cistern"]`, `CMD ["daemon"]`, `CISTERN_CONFIG=/etc/cistern/cistern.yaml`, `CISTERN_TMPDIR=/tmp`, ports `9464` (daemon) and `8443` (server) |
 
-Packages are installed with GPG verification against the MySQL and PGDG signing keys. The image
+The UI is built in a first stage from `node:22.23.4-alpine`, pinned by digest, with `npm ci` and
+`npm run build`, and embedded with `go build -tags ui`. Packages are installed with GPG verification against the MySQL and PGDG signing keys. The image
 works with a read-only root filesystem as long as `/tmp` is writable.
 
 Published images are at `ghcr.io/aupv9/cistern`, built by CI only after every test has passed:
@@ -54,20 +58,21 @@ MariaDB with it, as UID 10001 on a read-only root filesystem.
 
 ## Kubernetes
 
-[deploy/k8s](../deploy/k8s/) contains three kustomizations:
+[deploy/k8s](../deploy/k8s/) contains four kustomizations:
 
 | Directory | Contents |
 | --- | --- |
 | `base` | Daemon: Deployment (1 replica, `Recreate`), Service `cistern:9464`, NetworkPolicy (inbound only to 9464), ServiceAccount without a token |
 | `cronjob` | One-shot mode: CronJobs `cistern-backup` (`backup --all`) and `cistern-prune` (`prune --all`, separate credentials) |
 | `monitoring` | `PrometheusRule` with the alerts from [Observability](observability.md) (requires the Prometheus Operator) |
+| `server` | Admin UI: Deployment `cistern-server` (no keys secret), Service `cistern-server:8443`, NetworkPolicy, ServiceAccount without a token |
 
 Every pod runs as UID 10001 with `runAsNonRoot`, a read-only root filesystem, all capabilities
 dropped, `seccompProfile: RuntimeDefault` and no service account token. `/tmp` is a 20 GiB
-`emptyDir`. The daemon has `/healthz` probes and `terminationGracePeriodSeconds: 330`, longer than
+`emptyDir` (64 MiB for `cistern-server`, which never stages backup data). The daemon has `/healthz` probes and `terminationGracePeriodSeconds: 330`, longer than
 `--grace 5m`, so a running backup can finish when the pod is stopped.
 
-The manifests expect three objects that you create:
+The manifests expect these objects, which you create:
 
 | Object | Content | Mounted as |
 | --- | --- | --- |
@@ -75,6 +80,8 @@ The manifests expect three objects that you create:
 | Secret `cistern-env` | environment variables referenced as `${VAR}` in the configuration (passwords, S3 keys, `CISTERN_RECIPIENT`) | environment |
 | Secret `cistern-keys` (daemon only, optional) | `identity.txt` | `/etc/cistern-keys/identity.txt` |
 | Secret `cistern-prune-env` (prune CronJob) | environment for prune, with repository credentials allowed to delete | environment |
+| Secret `cistern-daemon-token` (with the Admin UI) | key `token`: the shared daemon API token, at least 32 characters | `CISTERN_DAEMON_TOKEN` in the daemon (optional) and the server |
+| Secret `cistern-server-env` (Admin UI) | `CISTERN_SESSION_KEY`, the OIDC client secret and the repository credentials the server needs | environment of the server |
 
 A minimal overlay:
 
@@ -113,6 +120,35 @@ Restore from inside the cluster with:
 ```sh
 kubectl -n backup exec deploy/cistern -- cistern restore --job orders-db --set restore_suffix=_restored --yes
 ```
+
+### Admin UI
+
+`deploy/k8s/server` runs `cistern server --listen :8443` with the same hardening as the daemon and
+the same `cistern-config` ConfigMap, but **without** the `cistern-keys` Secret. Configure the server
+behind an ingress that terminates TLS:
+
+```yaml
+daemon:
+  api_token: ${CISTERN_DAEMON_TOKEN}
+server:
+  public_url: https://backup.example.com
+  tls: { upstream: true }
+  session_key: ${CISTERN_SESSION_KEY}
+  daemon: { url: "http://cistern:9464", token: "${CISTERN_DAEMON_TOKEN}" }
+```
+
+```sh
+kubectl -n backup create secret generic cistern-daemon-token --from-literal=token="$(openssl rand -hex 32)"
+kubectl -n backup create secret generic cistern-server-env \
+  --from-literal=CISTERN_SESSION_KEY="$(openssl rand -hex 32)" \
+  --from-literal=CISTERN_OIDC_CLIENT_SECRET=... --from-literal=S3_ACCESS_KEY_ID=... --from-literal=S3_SECRET_ACCESS_KEY=...
+```
+
+Add `deploy/k8s/server` to your overlay next to `base` and route an Ingress to Service
+`cistern-server` port `8443`. The NetworkPolicy only admits traffic from the `ingress-nginx`
+namespace; patch it for your ingress controller. The server reaches the daemon on `cistern:9464`,
+the repository and the identity provider. The daemon API on port 9464 is only enabled when the
+token is set, and checks it on every request. Restart the daemon after creating the token Secret.
 
 `make e2e-k8s` (or `scripts/e2e-k8s.sh`) creates a throwaway k3d cluster, deploys `base` and
 `cronjob` with PostgreSQL, and checks the pod hardening, scheduled backups and verifies, metrics,

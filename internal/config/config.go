@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"cistern/internal/cron"
@@ -36,9 +38,13 @@ type Config struct {
 	Scheduler    Scheduler              `yaml:"scheduler"`
 	Defaults     Defaults               `yaml:"defaults"`
 	Jobs         []*Job                 `yaml:"jobs"`
+	Server       *Server                `yaml:"server"`
+	Daemon       Daemon                 `yaml:"daemon"`
 
 	Path       string             `yaml:"-"`
 	Recipients []*crypt.Recipient `yaml:"-"`
+
+	process Process
 }
 
 type Repository struct {
@@ -129,7 +135,36 @@ type Job struct {
 	PruneAfterBackup *bool             `yaml:"prune_after_backup"`
 	Hooks            Hooks             `yaml:"hooks"`
 	Params           map[string]string `yaml:"params"`
+	RestoreTargets   []*RestoreTarget  `yaml:"restore_targets"`
 }
+
+type RestoreTarget struct {
+	Name        string            `yaml:"name"`
+	Description string            `yaml:"description"`
+	Production  *bool             `yaml:"production"`
+	Set         map[string]string `yaml:"set"`
+}
+
+const OriginalTarget = "original"
+
+func (j *Job) Targets() []*RestoreTarget {
+	if len(j.RestoreTargets) > 0 {
+		return j.RestoreTargets
+	}
+	yes := true
+	return []*RestoreTarget{{Name: OriginalTarget, Production: &yes, Set: map[string]string{}}}
+}
+
+func (j *Job) Target(name string) (*RestoreTarget, bool) {
+	for _, t := range j.Targets() {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+func (t *RestoreTarget) IsProduction() bool { return t.Production == nil || *t.Production }
 
 func (r *Retention) validate() error {
 	if r == nil {
@@ -145,6 +180,8 @@ func (r *Retention) validate() error {
 	}
 	return nil
 }
+
+var targetRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 func (c *Config) Location() *time.Location {
 	if c.Scheduler.Timezone == "" {
@@ -175,12 +212,40 @@ func (c *Config) Resolve(p string) string {
 	return filepath.Join(filepath.Dir(c.Path), p)
 }
 
-func Load(path string) (*Config, error) {
+type Process int
+
+const (
+	ProcessCLI Process = iota
+	ProcessDaemon
+	ProcessServer
+)
+
+func (p Process) lenient(path string) bool {
+	var prefixes []string
+	switch p {
+	case ProcessCLI:
+		prefixes = []string{"server", "daemon", "jobs.restore_targets.set"}
+	case ProcessDaemon:
+		prefixes = []string{"server"}
+	case ProcessServer:
+		prefixes = []string{"jobs.params", "jobs.restore_targets.set", "daemon", "notify"}
+	}
+	for _, pre := range prefixes {
+		if path == pre || strings.HasPrefix(path, pre+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func Load(path string) (*Config, error) { return LoadFor(path, ProcessCLI) }
+
+func LoadFor(path string, p Process) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := Parse(data, osLookup)
+	cfg, err := ParseFor(data, osLookup, p)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -192,6 +257,10 @@ func Load(path string) (*Config, error) {
 }
 
 func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
+	return ParseFor(data, lookup, ProcessCLI)
+}
+
+func ParseFor(data []byte, lookup func(string) (string, bool), p Process) (*Config, error) {
 	root, err := parseYAML(string(data))
 	if err != nil {
 		return nil, err
@@ -199,13 +268,14 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if root.kind != mappingNode {
 		return nil, errors.New("top level must be a mapping")
 	}
-	if err := expandEnv(root, lookup); err != nil {
+	if err := expandEnv(root, lookup, "", p.lenient); err != nil {
 		return nil, err
 	}
 	cfg := &Config{}
 	if err := decode(root, reflect.ValueOf(cfg).Elem(), ""); err != nil {
 		return nil, err
 	}
+	cfg.process = p
 	if err := cfg.normalize(); err != nil {
 		return nil, err
 	}
@@ -281,7 +351,7 @@ func (c *Config) normalize() error {
 		}
 	}
 	for i, w := range c.Notify.Webhooks {
-		if w.URL == "" {
+		if w.URL == "" && !c.process.lenient("notify.webhooks.url") {
 			add("notify.webhooks[%d].url: required", i)
 		}
 		switch w.Format {
@@ -302,6 +372,9 @@ func (c *Config) normalize() error {
 				add("notify.webhooks[%d].on: must be failure or success, got %q", i, on)
 			}
 		}
+	}
+	if c.Daemon.APIToken != "" && len(c.Daemon.APIToken) < 32 {
+		add("daemon.api_token: must be at least 32 characters")
 	}
 	if err := c.Defaults.Retention.validate(); err != nil {
 		add("defaults.retention: %v", err)
@@ -367,6 +440,31 @@ func (c *Config) normalize() error {
 		if j.Params == nil {
 			j.Params = map[string]string{}
 		}
+		targets := map[string]bool{}
+		for k, t := range j.RestoreTargets {
+			tp := fmt.Sprintf("%s.restore_targets[%d]", p, k)
+			if t == nil {
+				add("%s: empty", tp)
+				continue
+			}
+			if !targetRe.MatchString(t.Name) {
+				add("%s.name: invalid target name %q", tp, t.Name)
+			} else if targets[t.Name] {
+				add("%s.name: duplicate target %q", tp, t.Name)
+			}
+			targets[t.Name] = true
+			if t.Set == nil {
+				t.Set = map[string]string{}
+			}
+			for key := range t.Set {
+				if key == "" {
+					add("%s.set: empty key", tp)
+				}
+			}
+		}
+	}
+	if c.Server != nil {
+		errs = append(errs, c.Server.normalize(c)...)
 	}
 	return errors.Join(errs...)
 }

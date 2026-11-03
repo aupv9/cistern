@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cistern-server
+spec:
+  replicas: 1
+  template:
+    spec:
+      serviceAccountName: cistern-server
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: cistern
+          args: ["server", "--listen", ":8443"]
+          ports:
+            - name: http
+              containerPort: 8443
+          envFrom:
+            - secretRef:
+                name: cistern-server-env
+          env:
+            - name: CISTERN_CONFIG
+              value: /etc/cistern/cistern.yaml
+            - name: CISTERN_LOG_FORMAT
+              value: json
+            - name: CISTERN_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cistern-daemon-token
+                  key: token
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/cistern, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: cistern-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

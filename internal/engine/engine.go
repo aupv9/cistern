@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"cistern/internal/admin"
 	"cistern/internal/config"
 	"cistern/internal/crypt"
 	"cistern/internal/driver"
@@ -37,8 +38,9 @@ type Engine struct {
 	now      func() time.Time
 	hostname string
 
+	repos *Repos
+
 	mu    sync.Mutex
-	repos map[string]repo.Repository
 	ids   []*crypt.Identity
 	idErr error
 	idSet bool
@@ -62,45 +64,12 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Engine, error) 
 		Cfg: cfg, Version: version, Log: log,
 		Metrics:  metrics.NewRegistry(),
 		notifier: notify.New(cfg.Notify.Webhooks, log),
-		now:      time.Now, hostname: host, repos: map[string]repo.Repository{},
+		now:      time.Now, hostname: host, repos: NewRepos(cfg, log),
 	}, nil
 }
 
 func (e *Engine) repoFor(job *config.Job) (repo.Repository, string, error) {
-	rc := e.Cfg.Repositories[job.Repository]
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if r, ok := e.repos[job.Repository]; ok {
-		return r, rc.Prefix, nil
-	}
-	var r repo.Repository
-	switch rc.Type {
-	case "local":
-		l, err := repo.NewLocal(e.Cfg.Resolve(rc.Path))
-		if err != nil {
-			return nil, "", fmt.Errorf("repository %s: %w", job.Repository, err)
-		}
-		r = l
-	case "s3":
-		cfg := repo.S3Config{
-			Endpoint: rc.Endpoint, Region: rc.Region, Bucket: rc.Bucket, PathStyle: rc.PathStyle,
-			AccessKeyID: rc.AccessKeyID, SecretAccessKey: rc.SecretAccessKey, SessionToken: rc.SessionToken,
-			PartSizeMB: rc.PartSizeMB, CAFile: e.Cfg.Resolve(rc.CAFile), InsecureSkipVerify: rc.InsecureSkip,
-			Log: e.Log.With("repository", job.Repository),
-		}
-		if rc.ObjectLock != nil {
-			cfg.LockMode, cfg.LockDays = rc.ObjectLock.Mode, rc.ObjectLock.Days
-		}
-		s, err := repo.NewS3(cfg)
-		if err != nil {
-			return nil, "", fmt.Errorf("repository %s: %w", job.Repository, err)
-		}
-		r = s
-	default:
-		return nil, "", fmt.Errorf("repository %s: unknown type %q", job.Repository, rc.Type)
-	}
-	e.repos[job.Repository] = r
-	return r, rc.Prefix, nil
+	return e.repos.Open(job.Repository)
 }
 
 func (e *Engine) identities() ([]*crypt.Identity, error) {
@@ -122,6 +91,7 @@ func (e *Engine) pipelineOptions() pipeline.Options {
 }
 
 func (e *Engine) lock(ctx context.Context, r repo.Repository, prefix string, job *config.Job, op, snap string) (func(), error) {
+	log := e.logger(ctx)
 	key := manifest.LockKey(prefix, job.Name)
 	now := e.now().UTC()
 	data, _ := json.Marshal(manifest.Lock{
@@ -135,7 +105,7 @@ func (e *Engine) lock(ctx context.Context, r repo.Repository, prefix string, job
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
 				if err := r.Delete(ctx, key); err != nil {
-					e.Log.Warn("releasing lock failed", "job", job.Name, "err", err)
+					log.Warn("releasing lock failed", "job", job.Name, "err", err)
 				}
 			}, nil
 		}
@@ -150,7 +120,7 @@ func (e *Engine) lock(ctx context.Context, r repo.Repository, prefix string, job
 				return nil, fmt.Errorf("job is locked: %s by %s (pid %d) since %s", held.Op, held.Host, held.PID, held.Started.Format(time.RFC3339))
 			}
 		}
-		e.Log.Warn("removing expired lock", "job", job.Name, "holder", held.Host, "pid", held.PID, "expired", held.Expires)
+		log.Warn("removing expired lock", "job", job.Name, "holder", held.Host, "pid", held.PID, "expired", held.Expires)
 		if err := r.Delete(ctx, key); err != nil {
 			return nil, err
 		}
@@ -172,6 +142,8 @@ type sink struct {
 	previous func() driver.Source
 	prevOnce sync.Once
 	prev     driver.Source
+
+	progress *admin.Progress
 }
 
 type artifactWriter struct {
@@ -233,7 +205,7 @@ func (s *sink) Previous() driver.Source {
 func (e *Engine) previousSource(ctx context.Context, r repo.Repository, prefix string, job *config.Job) driver.Source {
 	list, err := e.list(ctx, r, prefix, job.Name)
 	if err != nil {
-		e.Log.Warn("incremental: listing snapshots failed; making a full copy", "job", job.Name, "err", err)
+		e.logger(ctx).Warn("incremental: listing snapshots failed; making a full copy", "job", job.Name, "err", err)
 		return nil
 	}
 	for i := len(list) - 1; i >= 0; i-- {
@@ -244,7 +216,7 @@ func (e *Engine) previousSource(ctx context.Context, r repo.Repository, prefix s
 		var ids []*crypt.Identity
 		if m.Encryption != pipeline.EncryptionNone {
 			if ids, err = e.identities(); err != nil || len(ids) == 0 {
-				e.Log.Warn("incremental: reading the previous snapshot needs encryption.identity_file; making a full copy", "job", job.Name, "previous", m.ID)
+				e.logger(ctx).Warn("incremental: reading the previous snapshot needs encryption.identity_file; making a full copy", "job", job.Name, "previous", m.ID)
 				return nil
 			}
 		}
@@ -253,7 +225,11 @@ func (e *Engine) previousSource(ctx context.Context, r repo.Repository, prefix s
 	return nil
 }
 
-func (a *artifactWriter) Write(p []byte) (int, error) { return a.pl.Write(p) }
+func (a *artifactWriter) Write(p []byte) (int, error) {
+	n, err := a.pl.Write(p)
+	a.s.progress.AddBytes(int64(n))
+	return n, err
+}
 
 func (a *artifactWriter) Close() error {
 	if a.closed {
@@ -284,6 +260,7 @@ func (a *artifactWriter) Close() error {
 		PlainSHA256: res.PlainSHA256, StoredSHA256: res.StoredSHA256,
 	})
 	a.s.mu.Unlock()
+	a.s.progress.AddArtifact()
 	return nil
 }
 
@@ -321,6 +298,11 @@ func (e *Engine) Backup(ctx context.Context, jobName string) (*manifest.Manifest
 	start := e.now()
 	m, err := e.backup(ctx, job)
 	e.recordBackup(ctx, job, start, m, err)
+	rec := e.newRecord(ctx, job, admin.OpBackup, start, err)
+	if m != nil {
+		rec.Snapshot, rec.StoredBytes = m.ID, storedSize(m)
+	}
+	e.writeRecord(ctx, job, rec)
 	return m, err
 }
 
@@ -335,7 +317,7 @@ func (e *Engine) backup(ctx context.Context, job *config.Job) (*manifest.Manifes
 	}
 	started := e.now().UTC()
 	snap := manifest.NewSnapshotID(started)
-	log := e.Log.With("job", job.Name, "snapshot", snap)
+	log := e.logger(ctx).With("job", job.Name, "snapshot", snap)
 
 	unlock, err := e.lock(ctx, r, prefix, job, "backup", snap)
 	if err != nil {
@@ -348,7 +330,7 @@ func (e *Engine) backup(ctx context.Context, job *config.Job) (*manifest.Manifes
 	defer cancel()
 	opts := e.pipelineOptions()
 	s := &sink{ctx: bctx, repo: r, prefix: prefix, job: job.Name, snap: snap, opts: opts,
-		names: map[string]bool{}, open: map[*artifactWriter]bool{},
+		names: map[string]bool{}, open: map[*artifactWriter]bool{}, progress: runInfo(ctx).Progress,
 		previous: func() driver.Source { return e.previousSource(bctx, r, prefix, job) }}
 
 	info, err := drv.Backup(bctx, s)
@@ -550,35 +532,49 @@ func (e *Engine) List(ctx context.Context, jobName string) ([]*manifest.Manifest
 }
 
 func (e *Engine) list(ctx context.Context, r repo.Repository, prefix, job string) ([]*manifest.Manifest, error) {
+	return ListSnapshots(ctx, r, prefix, job, e.logger(ctx))
+}
+
+func ListSnapshots(ctx context.Context, r repo.Repository, prefix, job string, log *slog.Logger) ([]*manifest.Manifest, error) {
 	jobDir := path.Join(prefix, job) + "/"
 	keys, err := r.List(ctx, jobDir)
 	if err != nil {
 		return nil, err
 	}
 	var out []*manifest.Manifest
-	for _, k := range keys {
-		id, rest, ok := strings.Cut(strings.TrimPrefix(k, jobDir), "/")
-		if !ok || rest != "manifest.json" || !manifest.ValidSnapshotID(id) {
-			continue
-		}
-		m, err := readManifest(ctx, r, k)
+	for _, k := range ManifestKeys(keys, jobDir) {
+		m, err := ReadManifest(ctx, r, k)
 		if err != nil {
-			e.Log.Warn("skipping unreadable manifest", "key", k, "err", err)
+			log.Warn("skipping unreadable manifest", "key", k, "err", err)
 			continue
 		}
 		out = append(out, m)
 	}
+	SortSnapshots(out)
+	return out, nil
+}
 
+func ManifestKeys(keys []string, jobDir string) []string {
+	var out []string
+	for _, k := range keys {
+		id, rest, ok := strings.Cut(strings.TrimPrefix(k, jobDir), "/")
+		if ok && rest == "manifest.json" && manifest.ValidSnapshotID(id) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func SortSnapshots(out []*manifest.Manifest) {
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].StartedAt.Equal(out[j].StartedAt) {
 			return out[i].StartedAt.Before(out[j].StartedAt)
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil
 }
 
-func readManifest(ctx context.Context, r repo.Repository, key string) (*manifest.Manifest, error) {
+func ReadManifest(ctx context.Context, r repo.Repository, key string) (*manifest.Manifest, error) {
 	rc, err := r.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -594,7 +590,7 @@ func readManifest(ctx context.Context, r repo.Repository, key string) (*manifest
 	return &m, nil
 }
 
-func resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) {
+func Resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) {
 	if len(list) == 0 {
 		return nil, errors.New("no snapshots")
 	}
@@ -624,12 +620,13 @@ func resolve(list []*manifest.Manifest, ref string) (*manifest.Manifest, error) 
 }
 
 type source struct {
-	ctx    context.Context
-	e      *Engine
-	repo   repo.Repository
-	prefix string
-	m      *manifest.Manifest
-	ids    []*crypt.Identity
+	ctx      context.Context
+	e        *Engine
+	repo     repo.Repository
+	prefix   string
+	m        *manifest.Manifest
+	ids      []*crypt.Identity
+	progress *admin.Progress
 }
 
 func (s *source) SnapshotID() string { return s.m.ID }
@@ -645,7 +642,7 @@ func (s *source) Snapshot(id string) (driver.Source, error) {
 	if !allowed {
 		return nil, fmt.Errorf("snapshot %s is not in depends_on of %s", id, s.m.ID)
 	}
-	dep, err := readManifest(s.ctx, s.repo, manifest.ManifestKey(s.prefix, s.m.Job, id))
+	dep, err := ReadManifest(s.ctx, s.repo, manifest.ManifestKey(s.prefix, s.m.Job, id))
 	if err != nil {
 		return nil, fmt.Errorf("dependency snapshot %s: %w", id, err)
 	}
@@ -655,7 +652,7 @@ func (s *source) Snapshot(id string) (driver.Source, error) {
 			return nil, err
 		}
 	}
-	return &source{ctx: s.ctx, e: s.e, repo: s.repo, prefix: s.prefix, m: dep, ids: ids}, nil
+	return &source{ctx: s.ctx, e: s.e, repo: s.repo, prefix: s.prefix, m: dep, ids: ids, progress: s.progress}, nil
 }
 
 func (s *source) List() []string {
@@ -669,7 +666,12 @@ func (s *source) List() []string {
 func (s *source) Open(name string) (io.ReadCloser, error) {
 	for _, a := range s.m.Artifacts {
 		if a.Name == name {
-			return openArtifact(s.ctx, s.repo, s.prefix, s.m, a, s.ids)
+			rc, err := openArtifact(s.ctx, s.repo, s.prefix, s.m, a, s.ids)
+			if err != nil || s.progress == nil {
+				return rc, err
+			}
+			rc.progress = s.progress
+			return rc, nil
 		}
 	}
 	return nil, fmt.Errorf("artifact %q not in snapshot %s", name, s.m.ID)
@@ -683,7 +685,7 @@ func expectOf(a manifest.Artifact) pipeline.Result {
 	return pipeline.Result{PlainSize: a.PlainSize, StoredSize: a.StoredSize, PlainSHA256: a.PlainSHA256, StoredSHA256: a.StoredSHA256}
 }
 
-func openArtifact(ctx context.Context, r repo.Repository, prefix string, m *manifest.Manifest, a manifest.Artifact, ids []*crypt.Identity) (io.ReadCloser, error) {
+func openArtifact(ctx context.Context, r repo.Repository, prefix string, m *manifest.Manifest, a manifest.Artifact, ids []*crypt.Identity) (*artifactReader, error) {
 	rc, err := r.Get(ctx, artifactKey(prefix, m, a))
 	if err != nil {
 		return nil, err
@@ -700,10 +702,17 @@ func openArtifact(ctx context.Context, r repo.Repository, prefix string, m *mani
 
 type artifactReader struct {
 	*pipeline.Reader
-	raw    io.Closer
-	name   string
-	closed bool
-	err    error
+	raw      io.Closer
+	name     string
+	closed   bool
+	err      error
+	progress *admin.Progress
+}
+
+func (a *artifactReader) Read(p []byte) (int, error) {
+	n, err := a.Reader.Read(p)
+	a.progress.AddBytes(int64(n))
+	return n, err
 }
 
 func (a *artifactReader) Close() error {
@@ -715,6 +724,8 @@ func (a *artifactReader) Close() error {
 	a.raw.Close()
 	if err != nil {
 		a.err = fmt.Errorf("artifact %s: %w", a.name, err)
+	} else {
+		a.progress.AddArtifact()
 	}
 	return a.err
 }
@@ -733,6 +744,11 @@ func (e *Engine) Restore(ctx context.Context, jobName, ref string, overrides map
 	}
 	start := e.now()
 	m, err := e.restore(ctx, job, ref, overrides)
+	rec := e.newRecord(ctx, job, admin.OpRestore, start, err)
+	if m != nil {
+		rec.Snapshot = m.ID
+	}
+	e.writeRecord(ctx, job, rec)
 	ev := e.event(job, "restore", start, err)
 	if m != nil {
 		ev.Snapshot = m.ID
@@ -755,7 +771,7 @@ func (e *Engine) restore(ctx context.Context, job *config.Job, ref string, overr
 	if err != nil {
 		return nil, err
 	}
-	m, err := resolve(list, ref)
+	m, err := Resolve(list, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -783,11 +799,19 @@ func (e *Engine) restore(ctx context.Context, job *config.Job, ref string, overr
 	if err != nil {
 		return nil, err
 	}
-	log := e.Log.With("job", job.Name, "snapshot", m.ID)
-	log.Info("restore started")
+	log := e.logger(ctx).With("job", job.Name, "snapshot", m.ID)
+	log.Info("restore started", "target", runInfo(ctx).Target)
+	prog := runInfo(ctx).Progress
+	if prog != nil {
+		var total int64
+		for _, a := range m.Artifacts {
+			total += a.PlainSize
+		}
+		prog.SetTotal(int64(len(m.Artifacts)), total)
+	}
 	rctx, cancel := context.WithTimeout(ctx, job.Timeout)
 	defer cancel()
-	if err := drv.Restore(rctx, &source{ctx: rctx, e: e, repo: r, prefix: prefix, m: m, ids: ids}); err != nil {
+	if err := drv.Restore(rctx, &source{ctx: rctx, e: e, repo: r, prefix: prefix, m: m, ids: ids, progress: prog}); err != nil {
 		log.Error("restore failed", "err", err)
 		return m, fmt.Errorf("restore %s from %s: %w", job.Name, m.ID, err)
 	}
@@ -828,6 +852,11 @@ func (e *Engine) Verify(ctx context.Context, jobName, ref string) (*VerifyReport
 		}
 		failErr = fmt.Errorf("%d artifact(s) failed verification; first: %s", rep.Failures, first)
 	}
+	rec := e.newRecord(ctx, job, admin.OpVerify, start, failErr)
+	if ref != "all" && rep != nil && len(rep.Results) > 0 {
+		rec.Snapshot = rep.Results[0].Snapshot
+	}
+	e.writeRecord(ctx, job, rec)
 	if failErr != nil {
 		e.Metrics.Set(metrics.VerifyLastFailure, l, unix(e.now()))
 		n := 1
@@ -854,7 +883,7 @@ func (e *Engine) verify(ctx context.Context, job *config.Job, ref string) (*Veri
 	}
 	targets := list
 	if ref != "all" {
-		m, err := resolve(list, ref)
+		m, err := Resolve(list, ref)
 		if err != nil {
 			return nil, err
 		}
@@ -870,6 +899,16 @@ func (e *Engine) verify(ctx context.Context, job *config.Job, ref string) (*Veri
 	}
 
 	rep := &VerifyReport{Job: job.Name}
+	prog := runInfo(ctx).Progress
+	if prog != nil {
+		var n, total int64
+		for _, m := range targets {
+			n += int64(len(m.Artifacts))
+			total += storedSize(m)
+		}
+		prog.SetTotal(n, total)
+	}
+	e.logger(ctx).Info("verify started", "job", job.Name, "snapshots", len(targets))
 	for _, m := range targets {
 		for _, dep := range m.DependsOn {
 			if !byID[dep] {
@@ -884,9 +923,12 @@ func (e *Engine) verify(ctx context.Context, job *config.Job, ref string) (*Veri
 			}
 			if err := e.verifyArtifact(ctx, r, prefix, m, a, ids, full); err != nil {
 				res.Error = err.Error()
+				e.logger(ctx).Warn("artifact failed verification", "job", job.Name, "snapshot", m.ID, "artifact", a.Name, "err", err)
 			} else {
 				res.OK = true
 			}
+			prog.AddArtifact()
+			prog.AddBytes(a.StoredSize)
 			rep.Results = append(rep.Results, res)
 		}
 	}

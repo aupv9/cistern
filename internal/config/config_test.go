@@ -192,3 +192,100 @@ func TestLoadRecipientsAndExample(t *testing.T) {
 		t.Fatalf("example job: %+v", j)
 	}
 }
+
+const serverConfig = minimal + `
+daemon:
+  api_token: ${DAEMON_TOKEN}
+server:
+  name: production
+  public_url: https://backup.example.com/
+  tls: { upstream: true }
+  session_key: ${SESSION_KEY}
+  oidc: { issuer: "https://idp.example.com", client_id: cistern, client_secret: "${OIDC_SECRET}" }
+  roles:
+    - { group: dba, roles: [restorer, approver] }
+  daemon: { url: "http://cistern:9464", token: "${DAEMON_TOKEN}" }
+`
+
+func TestServerSectionAndTargets(t *testing.T) {
+	src := strings.Replace(serverConfig, "    hooks:", `    restore_targets:
+      - { name: staging, production: false, set: { host: staging, password: "${STAGING_PW}" } }
+      - { name: prod, set: {} }
+    hooks:`, 1)
+	full := map[string]string{"PGPORT": "1", "DAEMON_TOKEN": strings.Repeat("t", 32), "SESSION_KEY": strings.Repeat("s", 32), "OIDC_SECRET": "x", "STAGING_PW": "pw"}
+	cfg, err := ParseFor([]byte(src), env(full), ProcessServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Server
+	if s.Listen != DefaultServerListen || s.SessionTTL != 8*time.Hour || s.IdleTimeout != 30*time.Minute || s.StateRepository != "local" ||
+		s.AuditRetentionDays != 400 || s.OIDC.GroupsClaim != "groups" || s.PublicURL != "https://backup.example.com" {
+		t.Fatalf("server defaults: %+v", s)
+	}
+	if err := s.ValidateFor(false); err != nil {
+		t.Fatal(err)
+	}
+	j, _ := cfg.Job("db")
+	if st, _ := j.Target("staging"); st.IsProduction() || st.Set["password"] != "pw" {
+		t.Fatalf("staging: %+v", st)
+	}
+	if p, _ := j.Target("prod"); !p.IsProduction() {
+		t.Fatal("targets default to production")
+	}
+	ov, _, err := j.RestoreOverrides("staging", nil)
+	if err != nil || ov["restore_suffix"] != DefaultRestoreSuffix || ov["host"] != "staging" {
+		t.Fatalf("overrides: %v %v", ov, err)
+	}
+	empty := ""
+	if ov, _, _ := j.RestoreOverrides("staging", &empty); ov["restore_suffix"] != "" {
+		t.Fatalf("empty suffix: %v", ov)
+	}
+	bad := "x; drop"
+	if _, _, err := j.RestoreOverrides("staging", &bad); err != ErrInvalidSuffix {
+		t.Fatalf("bad suffix: %v", err)
+	}
+	if _, _, err := j.RestoreOverrides("nope", nil); err == nil {
+		t.Fatal("unknown target accepted")
+	}
+	j.Driver = "s3"
+	sfx := "_x"
+	if _, _, err := j.RestoreOverrides("staging", &sfx); err != ErrSuffixUnsupported {
+		t.Fatalf("s3 suffix: %v", err)
+	}
+	if ov, _, err := j.RestoreOverrides("staging", nil); err != nil || ov["restore_suffix"] != "" {
+		t.Fatalf("s3 default: %v %v", ov, err)
+	}
+
+	only := map[string]string{"PGPORT": "1", "PGHOST": "h"}
+	if _, err := ParseFor([]byte(src), env(only), ProcessCLI); err != nil {
+		t.Fatalf("the CLI must not need server or daemon secrets: %v", err)
+	}
+	if _, err := ParseFor([]byte(src), env(only), ProcessDaemon); err == nil {
+		t.Fatal("the daemon must need its api token")
+	}
+	srvOnly := map[string]string{"DAEMON_TOKEN": strings.Repeat("t", 32), "SESSION_KEY": strings.Repeat("s", 32), "OIDC_SECRET": "x"}
+	if _, err := ParseFor([]byte(src), env(srvOnly), ProcessServer); err != nil {
+		t.Fatalf("the server must not need database passwords: %v", err)
+	}
+	noSession := map[string]string{"PGPORT": "1", "DAEMON_TOKEN": strings.Repeat("t", 32), "OIDC_SECRET": "x", "STAGING_PW": "pw"}
+	if _, err := ParseFor([]byte(src), env(noSession), ProcessServer); err == nil {
+		t.Fatal("the server must need its session key")
+	}
+
+	for name, edit := range map[string][2]string{
+		"short session key": {"session_key: ${SESSION_KEY}", "session_key: short"},
+		"long ttl":          {"name: production", "name: production\n  session_ttl: 9h"},
+		"bad role":          {"roles: [restorer, approver]", "roles: [root]"},
+		"tls both":          {"tls: { upstream: true }", "tls: { upstream: true, cert_file: a, key_file: b }"},
+		"short retention":   {"name: production", "name: production\n  audit_retention_days: 30"},
+		"bad state repo":    {"name: production", "name: production\n  state_repository: nope"},
+		"public url path":   {"https://backup.example.com/", "https://backup.example.com/ui"},
+		"short token":       {"api_token: ${DAEMON_TOKEN}", "api_token: short"},
+		"dup target":        {"{ name: prod, set: {} }", "{ name: staging, set: {} }"},
+		"bad target name":   {"{ name: prod, set: {} }", "{ name: Prod, set: {} }"},
+	} {
+		if _, err := ParseFor([]byte(strings.Replace(src, edit[0], edit[1], 1)), env(full), ProcessServer); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

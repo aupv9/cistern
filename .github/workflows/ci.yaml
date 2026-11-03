@@ -17,6 +17,31 @@ jobs:
       - run: go test -race ./...
       - run: go build ./cmd/cistern
 
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.24"
+          cache-dependency-path: go.mod
+      - run: go build -tags ui -o /dev/null ./cmd/cistern
+        working-directory: .
+
   e2e:
     name: e2e (${{ matrix.target }})
     needs: test
@@ -25,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [postgres, s3, mysql, mariadb, s3-driver]
+        target: [postgres, s3, mysql, mariadb, s3-driver, server]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -36,7 +61,7 @@ jobs:
 
   image:
     name: image and kubernetes
-    needs: test
+    needs: [test, web]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -56,7 +81,7 @@ jobs:
 
   publish:
     name: publish image
-    needs: [test, e2e, image]
+    needs: [test, web, e2e, image]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 45

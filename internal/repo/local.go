@@ -110,8 +110,17 @@ func (l *Local) Get(_ context.Context, key string) (io.ReadCloser, error) {
 
 func (l *Local) List(_ context.Context, prefix string) ([]string, error) {
 	var keys []string
-	err := filepath.WalkDir(l.Root, func(p string, d fs.DirEntry, err error) error {
+	start := l.Root
+	if i := strings.LastIndex(prefix, "/"); i > 0 {
+		if dir := prefix[:i]; ValidKey(dir) == nil {
+			start = filepath.Join(l.Root, filepath.FromSlash(dir))
+		}
+	}
+	err := filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if p == start && errors.Is(err, fs.ErrNotExist) {
+				return filepath.SkipAll
+			}
 			return err
 		}
 		if d.IsDir() || strings.HasPrefix(d.Name(), tmpPrefix) {

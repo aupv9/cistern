@@ -76,7 +76,7 @@ func TestS3RepositoryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := srv.Keys()
+	keys := dataKeys(srv.Keys())
 	if len(keys) != 3 || !strings.HasPrefix(keys[0], "cistern/app/"+m1.ID+"/") {
 		t.Fatalf("keys: %v", keys)
 	}
@@ -135,7 +135,7 @@ func TestS3BackupFailureCleansUp(t *testing.T) {
 	if _, err := e.Backup(ctx, "app"); err == nil {
 		t.Fatal("expected failure")
 	}
-	if keys := srv.Keys(); len(keys) != 0 {
+	if keys := dataKeys(srv.Keys()); len(keys) != 0 {
 		t.Fatalf("leftover keys: %v", keys)
 	}
 	if srv.OpenUploads() != 0 {
@@ -153,4 +153,14 @@ func TestS3CheckRequiresObjectLock(t *testing.T) {
 	if _, err := e.Backup(context.Background(), "app"); err == nil {
 		t.Fatal("backup with retention to a bucket without Object Lock must fail")
 	}
+}
+
+func dataKeys(keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		if !strings.Contains(k, "/_admin/") {
+			out = append(out, k)
+		}
+	}
+	return out
 }

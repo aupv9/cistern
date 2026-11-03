@@ -75,7 +75,11 @@ token) is removed from log messages.
 ## Logs
 
 Logs go to stderr as text, or as JSON with `CISTERN_LOG_FORMAT=json`. Every message about a job
-carries `job` and, where relevant, `snapshot`.
+carries `job` and, where relevant, `snapshot`; operations started through the daemon also carry
+`run`.
+
+`cistern server` additionally writes each [audit entry](admin-ui.md#audit-log) to stdout as one JSON
+line with `"kind": "cistern.audit"`, ready for a SIEM.
 
 ## `/status`
 
@@ -92,6 +96,16 @@ The daemon's `/status` returns JSON:
   "tasks": [
     { "job": "orders-db", "op": "backup", "schedule": "0 2 * * *", "next": "2026-11-03T02:00:00+07:00",
       "running": false, "last_started": "…", "last_finished": "…", "skipped": 0 }
-  ]
+  ],
+  "running": [
+    { "job": "crm-db", "op": "backup", "run_id": "20261102T101500Z-1a2b3c4d", "trigger": "ui",
+      "started_at": "2026-11-02T10:15:00Z" }
+  ],
+  "timezone": "Asia/Ho_Chi_Minh",
+  "api": true
 }
 ```
+
+`running` lists operations in progress, whether scheduled or started from the Admin UI; `api` tells
+whether the internal API for `cistern server` is enabled. The UI also shows each run's history from
+the run records in the repository (see [Admin UI](admin-ui.md#run-records)).

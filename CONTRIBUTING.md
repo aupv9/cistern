@@ -24,6 +24,13 @@ the S3 client and repository are tested against an in-memory S3 server
 ([internal/s3/s3test](internal/s3/s3test)) that re-verifies SigV4 signatures, payload hashes and
 `Content-MD5` and models versioning and Object Lock.
 
+## Admin UI development
+
+The UI is in [web/](web/) and needs Node.js 22 (`npm ci`, then `npm run dev`, `lint`, `typecheck`,
+`test`, `build`). `make dev-ui` starts a backend for it on `http://127.0.0.1:8480` with a dev login
+and seeded history; it needs Docker, `curl` and `jq`. `make ui build-ui` produces a binary with the
+UI embedded. See [docs/admin-ui.md](docs/admin-ui.md#development).
+
 ## End-to-end tests
 
 `scripts/e2e-local.sh` builds a Linux binary, starts the systems in Docker and drives the real CLI:

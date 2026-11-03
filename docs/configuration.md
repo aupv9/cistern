@@ -2,7 +2,7 @@
 
 Cistern reads one YAML file, chosen in this order:
 
-1. `-c FILE` on the command line
+1. `-c FILE` or `--config FILE` on the command line
 2. the `CISTERN_CONFIG` environment variable
 3. `/etc/cistern/cistern.yaml`
 
@@ -30,10 +30,22 @@ documents.
 
 `${VAR}` and `${VAR:-default}` are replaced in every value when the file is loaded:
 
-- `${VAR}` fails if `VAR` is not set;
+- `${VAR}` fails if `VAR` is not set, except in sections the running process does not use (see
+  below);
 - `${VAR:-default}` uses `default` when `VAR` is unset **or empty**;
 - values are substituted after parsing, so a variable can never inject YAML structure;
 - values under `hooks` are not expanded (they are shell commands).
+
+Each process only needs its own secrets. In these sections an unset `${VAR}` expands to an empty
+string instead of failing:
+
+| Process | Sections |
+| --- | --- |
+| `cistern server` | `jobs[].params`, `jobs[].restore_targets[].set`, `daemon`, `notify` |
+| `cistern daemon` | `server` |
+| every other command | `server`, `daemon`, `jobs[].restore_targets[].set` |
+
+So the daemon does not need the UI session key, and the server does not need database passwords.
 
 ### Relative paths
 
@@ -140,6 +152,26 @@ Values every job inherits unless it sets its own.
 | `prune_after_backup` | bool | `defaults.prune_after_backup` | |
 | `hooks` | map | — | `pre_backup`, `post_backup`, `pre_restore`, `post_restore`. **Accepted but not executed yet** |
 | `params` | map | `{}` | Driver parameters. A list value is joined with commas (`databases: [a, b]` → `a,b`) |
+| `restore_targets` | list | one implicit target `original` | Where the [Admin UI](admin-ui.md#restore-targets) may restore to (see below) |
+
+### Restore targets
+
+```yaml
+restore_targets:
+  - { name: staging, description: "staging-db:5432", production: false, set: { host: staging-db, password: "${STAGING_PGPASSWORD}" } }
+  - { name: production, production: true }
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — | `[a-z0-9][a-z0-9._-]{0,62}`, unique within the job |
+| `description` | string | — | Shown in the UI; must not contain secrets |
+| `production` | bool | `true` | Restores into it need an approval |
+| `set` | map | `{}` | Parameter overrides, like `cistern restore --set k=v` |
+
+A job without `restore_targets` has one target, `original`: production, no overrides. The UI can
+only choose among these targets plus `restore_suffix` (for `postgres` and `mysql`), never a free-form
+host. The CLI does not use restore targets.
 
 ### Retention
 
@@ -161,6 +193,42 @@ are restricted, either one matching is enough.
 
 Macros: `@yearly` (`@annually`), `@monthly`, `@weekly`, `@daily` (`@midnight`), `@hourly`, and
 `@every <duration>` (for example `@every 6h`).
+
+## `daemon`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `api_token` | string | — | Enables the internal API (`/internal/v1/runs`) used by `cistern server`; at least 32 characters. Without it the API is off |
+
+## `server`
+
+Configuration of `cistern server`, the [Admin UI](admin-ui.md). Ignored by every other command.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | `cistern` | Deployment label shown in the UI, for example `production` |
+| `listen` | string | `127.0.0.1:8443` | Address to listen on (`--listen` overrides it) |
+| `public_url` | string | — | `https://host[:port]` users open, without a path; required except in dev mode. The OIDC redirect URI is `<public_url>/api/v1/auth/callback` |
+| `tls.cert_file`, `tls.key_file` | string | — | Serve HTTPS with this certificate and key (TLS 1.2+) |
+| `tls.upstream` | bool | `false` | Declare that a proxy terminates TLS; the server speaks HTTP and trusts the right-most `X-Forwarded-For` entry |
+| `session_key` | string | — | Encrypts the session and sign-in cookies; at least 32 bytes, from an environment variable. Required except in dev mode |
+| `session_ttl` | duration | `8h` | Absolute session lifetime, between `1m` and `8h` |
+| `idle_timeout` | duration | `30m` | Sign out after this much inactivity, at most `session_ttl` |
+| `state_repository` | string | `defaults.repository` | Repository for the audit log and approvals |
+| `audit_retention_days` | int | `400` | Object Lock retain-until for audit entries on S3 repositories with `object_lock`; at least 365 |
+| `oidc.issuer` | string | — | Issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration` |
+| `oidc.client_id` | string | — | Client ID |
+| `oidc.client_secret` | string | — | Client secret; empty for a public client |
+| `oidc.scopes` | list | `[openid]` | Extra scopes; `openid` is always requested |
+| `oidc.groups_claim` | string | `groups` | ID token claim with the user's groups (list or string) |
+| `oidc.email_claim` | string | `email` | ID token claim with the email |
+| `oidc.name_claim` | string | `name` | ID token claim with the display name |
+| `roles` | list | — | `{ group, roles }` entries; `roles` from `viewer`, `operator`, `restorer`, `approver`, `admin`. At least one is required except in dev mode |
+| `daemon.url` | string | — | Base URL of `cistern daemon`, for example `http://cistern:9464`. Without it the UI is read-only |
+| `daemon.token` | string | — | Same value as the daemon's `daemon.api_token`; required with `daemon.url` |
+
+Exactly one of `tls.cert_file`/`tls.key_file` and `tls.upstream: true` is required unless the server
+runs with `--insecure-dev-login`, which in turn needs a loopback `listen` and no `tls`.
 
 ## Environment variables
 

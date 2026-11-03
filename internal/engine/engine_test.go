@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"cistern/internal/admin"
 	"cistern/internal/config"
 	"cistern/internal/crypt"
 	"cistern/internal/driver"
@@ -203,13 +204,72 @@ func TestFailedBackupLeavesNothing(t *testing.T) {
 	}
 	var files []string
 	filepath.WalkDir(repoDir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+		if err == nil && !d.IsDir() && !strings.Contains(filepath.ToSlash(p), "/_admin/") {
 			files = append(files, p)
 		}
 		return nil
 	})
 	if len(files) != 0 {
 		t.Fatalf("leftover files: %v", files)
+	}
+	r, prefix, _ := e.repoFor(j)
+	recs, err := admin.ListRecords(context.Background(), r, prefix, "app")
+	if err != nil || len(recs) != 1 || recs[0].Status != admin.StateFailed || recs[0].Op != admin.OpBackup ||
+		recs[0].Trigger != admin.TriggerCLI || !strings.Contains(recs[0].Error, "dump crashed") || recs[0].Snapshot != "" {
+		t.Fatalf("run records: %+v, %v", recs, err)
+	}
+}
+
+func TestRunRecordsAndProgress(t *testing.T) {
+	e, _, _ := setup(t, true)
+	actor := &admin.Actor{ID: "u1", Email: "a@example.com", Name: "A"}
+	prog := &admin.Progress{}
+	id := admin.NewID(time.Now())
+	ctx := WithRun(context.Background(), &RunInfo{ID: id, Trigger: admin.TriggerUI, RequestedBy: actor, Progress: prog})
+	m, err := e.Backup(ctx, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := prog.View(); v.ArtifactsDone != 3 || v.BytesDone == 0 {
+		t.Fatalf("backup progress: %+v", v)
+	}
+	vprog := &admin.Progress{}
+	if _, err := e.Verify(WithRun(context.Background(), &RunInfo{Trigger: admin.TriggerSchedule, Progress: vprog}), "app", "latest"); err != nil {
+		t.Fatal(err)
+	}
+	if v := vprog.View(); v.ArtifactsDone != 3 || v.ArtifactsTotal != 3 || v.BytesDone != v.BytesTotal {
+		t.Fatalf("verify progress: %+v", v)
+	}
+	rprog := &admin.Progress{}
+	if _, err := e.Restore(WithRun(context.Background(), &RunInfo{Trigger: admin.TriggerUI, Target: "staging", ApprovalID: "ap1", Progress: rprog}), "app", "latest", map[string]string{"suffix": "_x"}); err != nil {
+		t.Fatal(err)
+	}
+	if v := rprog.View(); v.ArtifactsDone != 3 || v.BytesDone != v.BytesTotal || v.BytesTotal == 0 {
+		t.Fatalf("restore progress: %+v", v)
+	}
+	j, _ := e.Cfg.Job("app")
+	r, prefix, _ := e.repoFor(j)
+	recs, err := admin.ListRecords(context.Background(), r, prefix, "app")
+	if err != nil || len(recs) != 3 {
+		t.Fatalf("records: %+v %v", recs, err)
+	}
+	byOp := map[string]*admin.Record{}
+	for _, rec := range recs {
+		byOp[rec.Op] = rec
+	}
+	b := byOp[admin.OpBackup]
+	if b.ID != id || b.Status != admin.StateSucceeded || b.Snapshot != m.ID || b.StoredBytes == 0 || b.RequestedBy.Email != "a@example.com" || b.Trigger != admin.TriggerUI {
+		t.Fatalf("backup record: %+v", b)
+	}
+	if v := byOp[admin.OpVerify]; v.Snapshot != m.ID || v.Trigger != admin.TriggerSchedule || v.RequestedBy.ID != "scheduler" || v.Status != admin.StateSucceeded {
+		t.Fatalf("verify record: %+v", v)
+	}
+	if rs := byOp[admin.OpRestore]; rs.Target != "staging" || rs.ApprovalID != "ap1" || rs.Snapshot != m.ID {
+		t.Fatalf("restore record: %+v", rs)
+	}
+	list, _ := e.List(context.Background(), "app")
+	if len(list) != 1 {
+		t.Fatalf("run records must not appear as snapshots: %d", len(list))
 	}
 }
 

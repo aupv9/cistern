@@ -11,6 +11,7 @@
 ## Operating Cistern
 
 - [Deployment](deployment.md) — daemon or one-shot, systemd, Docker, Kubernetes
+- [Admin UI](admin-ui.md) — `cistern server`, roles, approvals, audit log, security model, local development
 - [Observability](observability.md) — metrics, alerts, webhooks, logs, `/status`
 - [Encryption and keys](encryption.md) — key management and threat model
 - [Disaster recovery](disaster-recovery.md) — restoring without Cistern

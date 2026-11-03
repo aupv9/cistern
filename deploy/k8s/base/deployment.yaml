@@ -38,6 +38,12 @@ spec:
               value: /etc/cistern/cistern.yaml
             - name: CISTERN_TMPDIR
               value: /tmp
+            - name: CISTERN_DAEMON_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cistern-daemon-token
+                  key: token
+                  optional: true
           readinessProbe:
             httpGet: { path: /healthz, port: metrics }
             periodSeconds: 10

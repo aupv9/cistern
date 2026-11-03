@@ -38,6 +38,29 @@ defaults:
   retention: { last: 3, daily: 7, weekly: 4, monthly: 6 }
   prune_after_backup: true
 
+daemon:
+  api_token: ${CISTERN_DAEMON_TOKEN}
+
+server:
+  name: production
+  listen: ":8443"
+  public_url: https://backup.example.com
+  tls: { upstream: true }
+  session_key: ${CISTERN_SESSION_KEY}
+  oidc:
+    issuer: https://sso.example.com/realms/ops
+    client_id: cistern
+    client_secret: ${CISTERN_OIDC_CLIENT_SECRET}
+  roles:
+    - { group: backup-viewers, roles: [viewer] }
+    - { group: backup-operators, roles: [operator] }
+    - { group: dba, roles: [restorer] }
+    - { group: dba-leads, roles: [approver] }
+    - { group: platform-admins, roles: [admin] }
+  daemon:
+    url: http://cistern:9464
+    token: ${CISTERN_DAEMON_TOKEN}
+
 jobs:
   - name: orders-db
     driver: postgres
@@ -49,6 +72,16 @@ jobs:
       user: backup
       password: ${PGPASSWORD}
       databases: [orders]
+    restore_targets:
+      - name: staging
+        description: Staging PostgreSQL server
+        production: false
+        set:
+          host: ${STAGING_PGHOST}
+          password: ${STAGING_PGPASSWORD}
+      - name: production
+        description: The live orders database server
+        production: true
 
   - name: shop-db
     driver: mysql

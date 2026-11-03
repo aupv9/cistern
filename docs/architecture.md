@@ -6,6 +6,7 @@ only knows how to read data out and write it back.
 
 ```mermaid
 flowchart TB
+    ui[cistern server] -->|internal API| cli
     cli[CLI / daemon] --> engine
     subgraph engine[Engine]
       lock[Job lock] --> sink[Sink] --> pipe[Pipeline<br/>SHA-256 → gzip → age → SHA-256] --> repo[Repository]
@@ -37,8 +38,14 @@ reported through metrics and webhooks.
 <prefix>/<job>/<snapshot-id>/manifest.json
 <prefix>/<job>/<snapshot-id>/artifacts/<artifact-name>[.gz][.age]
 <prefix>/locks/<job>.lock
+<prefix>/_admin/runs/<job>/<run-id>.json
+<prefix>/_admin/audit/YYYY/MM/DD/<time>-<rand>.json
+<prefix>/_admin/approvals/<id>/{request,decision,run}.json
 ```
 
+- **`_admin/`** holds run records (written after every operation), and the audit log and approvals of
+  the [Admin UI](admin-ui.md). Job names cannot start with `_`, so it never clashes with a job; prune
+  never touches it.
 - **Snapshot ID**: `YYYYMMDDTHHMMSSZ-xxxx` (UTC start time and 4 random hex digits).
 - **Job name**: `[a-z0-9][a-z0-9._-]{0,62}`, not `locks`.
 - **Artifact name**: `/`-separated segments of `[A-Za-z0-9._@=+-]`, no `.` or `..` segments.

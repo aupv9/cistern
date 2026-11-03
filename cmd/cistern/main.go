@@ -23,6 +23,9 @@ import (
 	"cistern/internal/driver"
 	_ "cistern/internal/driver/all"
 	"cistern/internal/engine"
+	"cistern/internal/runner"
+	"cistern/internal/server"
+	"cistern/web"
 )
 
 var version = "dev"
@@ -56,11 +59,12 @@ Commands:
   prune     Apply retention                   --job J | --all [--dry-run] [--json]
   check     Check tools, source, repository   --job J | --all
   daemon    Run schedules, serve HTTP         [--listen ADDR] [--grace 5m]
+  server    Serve the Admin UI and its API    [--listen ADDR] [--insecure-dev-login]
   drivers   List drivers
   keygen    Create an age X25519 key          [--out FILE]
   version   Print the version
 
-Every command accepts -c FILE (default: $CISTERN_CONFIG, then /etc/cistern/cistern.yaml).
+Every command accepts -c FILE or --config FILE (default: $CISTERN_CONFIG, then /etc/cistern/cistern.yaml).
 Set CISTERN_LOG_FORMAT=json for JSON logs. Exit codes: 0 success, 1 failure, 2 usage error.
 `
 
@@ -84,6 +88,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs := flag.NewFlagSet("cistern "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	c := &cli{ctx: ctx, stdin: stdin, stdout: stdout, stderr: stderr, cfg: fs.String("c", "", "config file")}
+	fs.StringVar(c.cfg, "config", "", "config file (same as -c)")
 
 	var err error
 	switch cmd {
@@ -107,6 +112,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		grace := fs.Duration("grace", 5*time.Minute, "how long to wait for running jobs on shutdown")
 		if err = fs.Parse(rest); err == nil {
 			err = c.daemon(*listen, *grace)
+		}
+	case "server":
+		listen := fs.String("listen", "", "HTTP(S) address (default: server.listen, 127.0.0.1:8443)")
+		dev := fs.Bool("insecure-dev-login", false, "enable /api/v1/auth/dev-login (loopback, no TLS, local development only)")
+		if err = fs.Parse(rest); err == nil {
+			err = c.server(*listen, *dev)
 		}
 	case "backup", "check":
 		job := fs.String("job", "", "job name")
@@ -188,16 +199,22 @@ func exactlyOne(job string, all bool) error {
 	return nil
 }
 
-func (c *cli) engine() (*engine.Engine, error) {
-	cfg, err := config.Load(config.Path(*c.cfg))
-	if err != nil {
-		return nil, err
-	}
+func (c *cli) logger() *slog.Logger {
 	var h slog.Handler = slog.NewTextHandler(c.stderr, nil)
 	if os.Getenv("CISTERN_LOG_FORMAT") == "json" {
 		h = slog.NewJSONHandler(c.stderr, nil)
 	}
-	e, err := engine.New(cfg, version, slog.New(h))
+	return slog.New(h)
+}
+
+func (c *cli) engine() (*engine.Engine, error) { return c.engineFor(config.ProcessCLI) }
+
+func (c *cli) engineFor(p config.Process) (*engine.Engine, error) {
+	cfg, err := config.LoadFor(config.Path(*c.cfg), p)
+	if err != nil {
+		return nil, err
+	}
+	e, err := engine.New(cfg, version, c.logger())
 	if err != nil {
 		return nil, err
 	}
@@ -285,8 +302,20 @@ func (c *cli) prune(job string, all, dryRun, asJSON bool) error {
 	return nil
 }
 
+func (c *cli) server(listen string, dev bool) error {
+	cfg, err := config.LoadFor(config.Path(*c.cfg), config.ProcessServer)
+	if err != nil {
+		return err
+	}
+	srv, err := server.New(server.Options{Config: cfg, Version: version, Listen: listen, DevLogin: dev, Log: c.logger(), AuditOut: c.stdout, UI: web.FS()})
+	if err != nil {
+		return err
+	}
+	return srv.Run(c.ctx)
+}
+
 func (c *cli) daemon(listen string, grace time.Duration) error {
-	e, err := c.engine()
+	e, err := c.engineFor(config.ProcessDaemon)
 	if err != nil {
 		return err
 	}
@@ -311,6 +340,9 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 		e.Log.Warn("no job has schedule or verify_schedule: daemon only serves /metrics, /healthz and /status")
 	}
 	e.RefreshMetrics(c.ctx)
+	if e.Cfg.Daemon.APIToken != "" {
+		e.Log.Info("internal API enabled for the admin server", "path", "/internal/v1/runs")
+	}
 	return daemon.Run(c.ctx, daemon.Options{
 		Listen:   listen,
 		Grace:    grace,
@@ -319,19 +351,10 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 		Tasks:    tasks,
 		Location: e.Cfg.Location(),
 		Log:      e.Log,
-		Runner: func(ctx context.Context, job, op string) error {
-			switch op {
-			case "backup":
-				_, err := e.Backup(ctx, job)
-				return err
-			case "verify":
-				rep, err := e.Verify(ctx, job, "latest")
-				if err == nil && rep.Failures > 0 {
-					err = fmt.Errorf("verify: %d artifact(s) failed", rep.Failures)
-				}
-				return err
-			}
-			return fmt.Errorf("unknown op %q", op)
+		APIToken: e.Cfg.Daemon.APIToken,
+		Prepare:  func(req *daemon.RunRequest) error { return runner.Prepare(e.Cfg, req) },
+		Execute: func(ctx context.Context, req *daemon.RunRequest) (daemon.Result, error) {
+			return runner.Execute(ctx, e, req)
 		},
 	})
 }

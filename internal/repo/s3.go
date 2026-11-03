@@ -125,3 +125,25 @@ func (r *S3) Check(ctx context.Context) error {
 	}
 	return nil
 }
+
+type Retainer interface {
+	LockMode() string
+	PutIfAbsentUntil(ctx context.Context, key string, data []byte, until time.Time) error
+}
+
+func (r *S3) LockMode() string { return r.lockMode }
+
+func (r *S3) PutIfAbsentUntil(ctx context.Context, key string, data []byte, until time.Time) error {
+	if err := ValidKey(key); err != nil {
+		return err
+	}
+	opts := s3.PutOptions{IfNoneMatch: true}
+	if r.lockMode != "" {
+		opts.Retention = &s3.Retention{Mode: r.lockMode, Until: until.UTC().Truncate(time.Second)}
+	}
+	err := r.c.PutObject(ctx, key, data, opts)
+	if errors.Is(err, s3.ErrPreconditionFailed) {
+		return fmt.Errorf("%s: %w", key, ErrExist)
+	}
+	return err
+}

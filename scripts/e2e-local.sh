@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TARGETS=${*:-postgres s3 mysql mariadb s3-driver}
+TARGETS=${*:-postgres s3 mysql mariadb s3-driver server}
 PG_IMAGE=${PG_IMAGE:-postgres:16.15@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a}
 MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902}
 MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620}
@@ -208,6 +208,7 @@ for t in $TARGETS; do
     mariadb) start_mysql "$MARIADB_IMAGE" mariadb ;;
     s3-driver) run_s3_driver ;;
     image) run_image ;;
-    *) fail "unknown target $t (postgres | s3 | mysql | mariadb | s3-driver | image)" ;;
+    server) "$ROOT/scripts/dev-ui.sh" --no-seed --run "$ROOT/scripts/e2e/server.sh" ;;
+    *) fail "unknown target $t (postgres | s3 | mysql | mariadb | s3-driver | image | server)" ;;
   esac
 done

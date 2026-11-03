@@ -1,11 +1,22 @@
 # syntax=docker/dockerfile:1
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+COPY web/scripts ./scripts
+RUN npm ci --no-audit --no-fund
+COPY api /src/api
+COPY web ./
+RUN npm run build && test -f dist/client/_shell.html
+
 FROM golang:1.24-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
+COPY web/ui.go web/ui_stub.go ./web/
+COPY --from=web /src/web/dist/client ./web/dist/client
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags "-s -w -X main.version=${VERSION}" -o /out/cistern ./cmd/cistern
+RUN CGO_ENABLED=0 go build -trimpath -tags timetzdata,ui -ldflags "-s -w -X main.version=${VERSION}" -o /out/cistern ./cmd/cistern
 
 FROM oraclelinux:9-slim
 ARG PG_MAJOR=16
@@ -26,6 +37,6 @@ ENV PATH=/usr/pgsql-${PG_MAJOR}/bin:$PATH \
     HOME=/tmp
 COPY --from=build /out/cistern /usr/local/bin/cistern
 USER 10001:10001
-EXPOSE 9464
+EXPOSE 9464 8443
 ENTRYPOINT ["/usr/local/bin/cistern"]
 CMD ["daemon"]

@@ -41,6 +41,8 @@ type task struct {
 }
 
 type Scheduler struct {
+	Busy func(job string) bool
+
 	run Runner
 	loc *time.Location
 	log *slog.Logger
@@ -96,6 +98,9 @@ func (s *Scheduler) dispatch(jobCtx context.Context) time.Duration {
 			if t.running {
 				t.skipped++
 				s.log.Warn("skipping scheduled run: previous run still in progress", "job", t.Job, "op", t.Op, "started", t.started)
+			} else if s.Busy != nil && s.Busy(t.Job) {
+				t.skipped++
+				s.log.Warn("skipping scheduled run: the job has another operation running", "job", t.Job, "op", t.Op)
 			} else {
 				s.start(jobCtx, t)
 			}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"cistern/internal/admin"
 	"cistern/internal/config"
 	"cistern/internal/driver"
 	"cistern/internal/manifest"
@@ -55,6 +56,7 @@ func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*Prune
 	if err == nil && rep.Errors > 0 {
 		failErr = fmt.Errorf("%d snapshot(s) could not be removed", rep.Errors)
 	}
+	e.writeRecord(ctx, job, e.newRecord(ctx, job, admin.OpPrune, start, failErr))
 	if failErr != nil {
 		e.Metrics.Set(metrics.PruneLastFailure, metrics.Job(job.Name), unix(e.now()))
 	}
@@ -83,7 +85,7 @@ func (e *Engine) lockedPrune(ctx context.Context, job *config.Job, dryRun bool) 
 }
 
 func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, job *config.Job, dryRun bool) (*PruneReport, error) {
-	log := e.Log.With("job", job.Name)
+	log := e.logger(ctx).With("job", job.Name)
 	rep := &PruneReport{Job: job.Name, DryRun: dryRun}
 
 	jobDir := path.Join(prefix, job.Name) + "/"
@@ -107,7 +109,7 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 	manifests := map[string]*manifest.Manifest{}
 	var snaps []retention.Snapshot
 	for id := range hasManifest {
-		m, err := readManifest(ctx, r, manifest.ManifestKey(prefix, job.Name, id))
+		m, err := ReadManifest(ctx, r, manifest.ManifestKey(prefix, job.Name, id))
 		if err != nil {
 
 			rep.Items = append(rep.Items, PruneItem{Snapshot: id, Action: ActionKeep, Reasons: []string{"unreadable manifest"}, Error: err.Error()})

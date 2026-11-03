@@ -5,7 +5,7 @@ cistern <command> [flags]
 ```
 
 Flags follow the command (`cistern backup -c cistern.yaml --job orders-db`). Every command that reads
-the configuration accepts `-c FILE`; without it Cistern uses `$CISTERN_CONFIG`, then
+the configuration accepts `-c FILE` (or `--config FILE`); without it Cistern uses `$CISTERN_CONFIG`, then
 `/etc/cistern/cistern.yaml`.
 
 ## Exit codes
@@ -109,12 +109,31 @@ Runs every job's `schedule` (backup) and `verify_schedule` (verify the newest sn
 | --- | --- |
 | `/metrics` | Prometheus metrics |
 | `/healthz` | `ok` |
-| `/status` | JSON: jobs, snapshot counts, last success and failure, each scheduled task's next run and last result |
+| `/status` | JSON: jobs, snapshot counts, last success and failure, each scheduled task's next run and last result, running operations (`running`), the scheduler time zone (`timezone`) and whether the internal API is on (`api`) |
+| `/internal/v1/runs` | Only with `daemon.api_token`: `POST` starts a backup, verify or restore for `cistern server` (`202`, or `409` if the job is busy); `GET` lists runs (`?active=true`); `GET /internal/v1/runs/{id}` returns state, progress and the last 200 log lines. Requires `Authorization: Bearer <api_token>` |
 
 `--listen` defaults to `metrics.listen` (`:9464`). Different jobs run in parallel; when a run comes
 due while the previous run of the same job and operation is still going, it is skipped and logged.
-Missed runs are not caught up after a restart. On SIGTERM or SIGINT the daemon stops the HTTP server,
+Missed runs are not caught up after a restart. A scheduled run is also skipped while an operation
+started from the Admin UI is running for the same job. The daemon remembers runs for 24 hours. On SIGTERM or SIGINT the daemon stops the HTTP server,
 waits up to `--grace` (default `5m`) for running jobs, then cancels them.
+
+## `server`
+
+```
+cistern server [--listen ADDR] [--insecure-dev-login]
+```
+
+Serves the [Admin UI](admin-ui.md) and its API from the `server` section of the configuration. It
+holds no private key: backups, verifies and restores are sent to the daemon at `server.daemon.url`.
+
+| Flag | Description |
+| --- | --- |
+| `--listen` | Address, default `server.listen` (`127.0.0.1:8443`) |
+| `--insecure-dev-login` | Enable `GET /api/v1/auth/dev-login` for local development; only with a loopback address and without `server.tls` |
+
+Logs go to stderr; audit entries are also written to stdout, one JSON line each with
+`"kind": "cistern.audit"`. `/healthz` answers `ok`.
 
 ## `keygen`
 
@@ -136,6 +155,6 @@ file to stdout. The format is the same as `age-keygen`.
 | Variable | Description |
 | --- | --- |
 | `CISTERN_CONFIG` | Configuration file |
-| `CISTERN_LOG_FORMAT` | `json` for JSON logs; text otherwise |
+| `CISTERN_LOG_FORMAT` | `json` for JSON logs on stderr; text otherwise (audit lines on stdout are always JSON) |
 | `CISTERN_TMPDIR` | Directory for private temporary files (default: system temporary directory) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | S3 credentials when the configuration has none |

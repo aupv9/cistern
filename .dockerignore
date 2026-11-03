@@ -1,5 +1,6 @@
 .git
 .idea
+.dev-ui
 bin
 *.age
 identity*.txt
@@ -7,3 +8,8 @@ docs
 deploy
 scripts
 examples
+web/node_modules
+web/dist
+web/dist-mock
+web/test-results
+web/playwright-report
