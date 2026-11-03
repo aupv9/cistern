@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
@@ -90,6 +91,7 @@ func (s *Scheduler) dispatch(jobCtx context.Context) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wait := time.Hour
+	startedJobs := map[string]bool{}
 	for _, t := range s.tasks {
 		if t.next.IsZero() {
 			continue
@@ -98,10 +100,11 @@ func (s *Scheduler) dispatch(jobCtx context.Context) time.Duration {
 			if t.running {
 				t.skipped++
 				s.log.Warn("skipping scheduled run: previous run still in progress", "job", t.Job, "op", t.Op, "started", t.started)
-			} else if s.Busy != nil && s.Busy(t.Job) {
+			} else if startedJobs[t.Job] || (s.Busy != nil && s.Busy(t.Job)) {
 				t.skipped++
 				s.log.Warn("skipping scheduled run: the job has another operation running", "job", t.Job, "op", t.Op)
 			} else {
+				startedJobs[t.Job] = true
 				s.start(jobCtx, t)
 			}
 			t.next = t.Schedule.Next(now)
@@ -126,13 +129,19 @@ func (s *Scheduler) start(jobCtx context.Context, t *task) {
 		defer s.wg.Done()
 		err := s.run(jobCtx, t.Job, t.Op)
 		s.mu.Lock()
+		busy := errors.Is(err, ErrBusy)
 		t.running, t.ended = false, s.now()
 		t.lastErr = ""
-		if err != nil {
+		if busy {
+			t.skipped++
+		} else if err != nil {
 			t.lastErr = err.Error()
 		}
 		s.mu.Unlock()
-		if err != nil {
+		switch {
+		case busy:
+			s.log.Warn("skipping scheduled run: the job has another operation running", "job", t.Job, "op", t.Op)
+		case err != nil:
 			s.log.Error("scheduled run failed", "job", t.Job, "op", t.Op, "err", err)
 		}
 	}()

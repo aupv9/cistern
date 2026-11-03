@@ -1,13 +1,16 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -163,5 +166,52 @@ func TestRunServesStatusAndWaitsForJobs(t *testing.T) {
 	case <-finished:
 	default:
 		t.Fatal("daemon exited before the running job finished")
+	}
+}
+
+func TestSchedulerSkipsOpsOnBusyJob(t *testing.T) {
+	var mu sync.Mutex
+	busy := map[string]bool{}
+	runs := 0
+	run := func(ctx context.Context, job, op string) error {
+		mu.Lock()
+		if busy[job] {
+			mu.Unlock()
+			return fmt.Errorf("start %s: %w", op, ErrBusy)
+		}
+		busy[job] = true
+		runs++
+		mu.Unlock()
+		time.Sleep(25 * time.Millisecond)
+		mu.Lock()
+		busy[job] = false
+		mu.Unlock()
+		return nil
+	}
+	var logs bytes.Buffer
+	s := NewScheduler([]Task{
+		{Job: "j", Op: "backup", Expr: "@every 40ms", Schedule: every(t, "40ms")},
+		{Job: "j", Op: "verify", Expr: "@every 40ms", Schedule: every(t, "40ms")},
+	}, run, time.UTC, slog.New(slog.NewTextHandler(&logs, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Loop(ctx, context.Background()); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	<-done
+	s.Wait(time.Second, func() {})
+
+	skipped := 0
+	for _, st := range s.Status() {
+		if st.LastError != "" {
+			t.Errorf("%s/%s reported an error for a busy job: %q", st.Job, st.Op, st.LastError)
+		}
+		skipped += st.Skipped
+	}
+	if runs == 0 || skipped == 0 {
+		t.Errorf("runs=%d skipped=%d", runs, skipped)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("busy job logged as an error:\n%s", logs.String())
 	}
 }
