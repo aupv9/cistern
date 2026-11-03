@@ -4,9 +4,12 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
-## Unreleased
+## [Unreleased]
 
-Everything planned for the first production milestone is now implemented.
+## [0.2] - 2026-11-03
+
+Everything planned for the first production milestone is now implemented: PostgreSQL, MySQL/MariaDB
+and S3 sources, local and S3 repositories with Object Lock, and a scheduling daemon.
 
 ### Added
 
@@ -33,6 +36,8 @@ Everything planned for the first production milestone is now implemented.
 - End-to-end test targets `s3`, `mysql`, `mariadb` and `s3-driver` (MinIO checked with the AWS CLI).
 - Project documentation in English: README, `docs/`, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT.
 - Apache License 2.0 and NOTICE.
+- GitHub Actions CI runs gofmt, vet, unit tests (also with the race detector) and every end-to-end
+  target; all end-to-end images are pinned to exact versions by digest.
 
 ### Changed
 
@@ -45,7 +50,15 @@ Everything planned for the first production milestone is now implemented.
 - `docker-compose.yaml` pointed `CISTERN_TMPDIR` at a directory that did not exist.
 - End-to-end tests left anonymous Docker volumes behind.
 
-## 0.1 — 2026-11-02
+### Known issues
+
+- `hooks` are parsed but not executed yet.
+- The container image does not include the PostgreSQL and MySQL clients yet, and the Docker,
+  Kubernetes and systemd files in `deploy/` have not been verified.
+- S3 credentials come from the configuration or `AWS_*` variables; IRSA and instance profiles are not
+  supported yet.
+
+## [0.1] - 2026-11-02
 
 First release: end-to-end PostgreSQL backups to a local repository.
 
@@ -63,3 +76,7 @@ First release: end-to-end PostgreSQL backups to a local repository.
 - Prometheus metrics through the daemon, Pushgateway or textfile, alert rules, and
   Slack/Teams/Telegram/JSON webhooks.
 - `cistern keygen`, `cistern check`, `cistern daemon` (HTTP only).
+
+[Unreleased]: https://github.com/aupv9/cistern/compare/v0.2...HEAD
+[0.2]: https://github.com/aupv9/cistern/compare/v0.1...v0.2
+[0.1]: https://github.com/aupv9/cistern/releases/tag/v0.1
