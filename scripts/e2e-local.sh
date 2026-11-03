@@ -12,12 +12,12 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGETS=${*:-postgres s3 mysql mariadb s3-driver}
-PG_IMAGE=${PG_IMAGE:-postgres:16}
-MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4}
-MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4}
-# Image ngoài được pin theo digest (manifest list, chạy được cả amd64 lẫn arm64) để CI không đổi
-# theo bản phát hành mới. Nâng phiên bản: docker buildx imagetools inspect <image>:latest, chạy
-# ./scripts/e2e-local.sh s3 s3-driver với digest mới, rồi cập nhật dưới đây.
+# Mọi image được pin theo phiên bản chính xác và digest (manifest list, chạy được cả amd64 lẫn arm64)
+# để CI không đổi theo bản phát hành mới. Nâng phiên bản: docker buildx imagetools inspect <image:tag>,
+# chạy ./scripts/e2e-local.sh với image mới (qua biến môi trường bên dưới), rồi cập nhật ở đây.
+PG_IMAGE=${PG_IMAGE:-postgres:16.15@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a}
+MYSQL_IMAGE=${MYSQL_IMAGE:-mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902}
+MARIADB_IMAGE=${MARIADB_IMAGE:-mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620}
 # Docker Hub không còn image minio/minio; Chainguard chỉ có tag latest miễn phí nên pin bằng digest.
 MINIO_IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f} # RELEASE.2026-10-23T20-06-51Z
 AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f}
