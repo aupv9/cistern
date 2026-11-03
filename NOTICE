@@ -1,0 +1,10 @@
+Cistern
+Copyright 2026 The Cistern Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed as part of the Go project
+(golang.org/x/crypto: chacha20, chacha20poly1305, internal/poly1305,
+internal/alias), copied without modification of the cryptographic code into
+internal/thirdparty/xcrypto and licensed under the BSD 3-Clause License.
+See internal/thirdparty/xcrypto/LICENSE and internal/thirdparty/xcrypto/PATENTS.

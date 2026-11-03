@@ -1,4 +1,6 @@
-# Ví dụ cấu hình Cistern — xem docs/TDD.md §Cấu hình. Khóa lạ bị từ chối.
+# Example Cistern configuration. Every key is described in docs/configuration.md.
+# Unknown keys are rejected. ${VAR} and ${VAR:-default} are read from the environment.
+
 repositories:
   local:
     type: local
@@ -6,37 +8,37 @@ repositories:
   s3-main:
     type: s3
     endpoint: https://s3.ap-southeast-1.amazonaws.com
-    bucket: company-backups
     region: ap-southeast-1
+    bucket: company-backups
     prefix: cistern
-    # Bỏ trống để lấy AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
+    # Leave both empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
     access_key_id: ${S3_ACCESS_KEY_ID}
     secret_access_key: ${S3_SECRET_ACCESS_KEY}
-    path_style: false
     part_size_mb: 16
-    # Bucket phải tạo kèm Object Lock; xem deploy/s3/README.md. days ≤ retention ngắn nhất.
+    # The bucket must be created with Object Lock (docs/repositories.md).
+    # Keep days no longer than the shortest retention period.
     object_lock: { mode: COMPLIANCE, days: 7 }
 
 encryption:
-  # Public key tạo bằng `cistern keygen --out identity.txt` hoặc `age-keygen`.
+  # Public keys from `cistern keygen --out identity.txt` or `age-keygen`.
   recipients:
     - ${CISTERN_RECIPIENT}
-  # recipients_file: recipients.txt            # đường dẫn tương đối tính theo file cấu hình
-  # identity_file: /etc/cistern/identity.txt   # chỉ mount ở pod verify/restore
+  # recipients_file: recipients.txt            # relative paths are resolved against this file
+  # identity_file: /etc/cistern/identity.txt   # only where you verify, restore or run incremental S3 jobs
 
 compression:
-  level: 6
+  level: 6                                     # gzip 1-9, 0 = store uncompressed
 
 metrics:
-  listen: ":9464"
-  # pushgateway_url: http://pushgateway:9091
+  listen: ":9464"                              # daemon: /metrics, /healthz, /status
+  # pushgateway_url: http://pushgateway:9091   # one-shot commands push here
   # textfile_dir: /var/lib/node_exporter/textfile
 
 notify:
   webhooks:
     - url: ${SLACK_WEBHOOK_URL}
-      format: slack                 # slack | teams | telegram (cần chat_id) | json
-      on: [failure]                 # thêm success để báo cả khi thành công
+      format: slack                            # slack | teams | telegram (needs chat_id) | json
+      on: [failure]                            # add success to be told about successful runs too
 
 scheduler:
   timezone: Asia/Ho_Chi_Minh
@@ -44,7 +46,7 @@ scheduler:
 defaults:
   repository: s3-main
   timeout: 6h
-  # GFS theo finished_at và scheduler.timezone: last, hourly, daily, weekly, monthly, yearly.
+  # GFS on finished_at in scheduler.timezone: last, hourly, daily, weekly, monthly, yearly.
   retention: { last: 3, daily: 7, weekly: 4, monthly: 6 }
   prune_after_backup: true
 
@@ -57,13 +59,11 @@ jobs:
       host: ${PGHOST}
       port: ${PGPORT:-5432}
       user: backup
-      password: ${PGPASSWORD}
+      password: ${PGPASSWORD}                  # passed to pg_dump as PGPASSWORD, never on the command line
       databases: [orders]
-    hooks:
-      post_restore: ./scripts/check-orders.sh
 
   - name: shop-db
-    driver: mysql                   # MySQL hoặc MariaDB; mật khẩu đi qua file option tạm 0600
+    driver: mysql                              # MySQL or MariaDB; credentials go through a 0600 option file
     schedule: "30 2 * * *"
     params:
       host: ${MYSQL_HOST:-mysql}
@@ -72,17 +72,10 @@ jobs:
       databases: [shop]
 
   - name: uploads
-    driver: s3                      # sao chép bucket/prefix; incremental theo ETag cần identity_file
+    driver: s3                                 # copy a bucket/prefix; incremental needs identity_file
     schedule: "0 3 * * *"
     params:
       endpoint: https://s3.ap-southeast-1.amazonaws.com
       region: ap-southeast-1
       bucket: app-uploads
-      prefix: uploads/              # credential trống = AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-
-  - name: cache
-    driver: redis
-    schedule: "@every 6h"
-    params:
-      host: redis
-      port: 6379
+      prefix: uploads/                         # empty credentials = AWS_* environment variables

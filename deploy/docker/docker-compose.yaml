@@ -6,7 +6,7 @@ services:
     user: "10001:10001"
     environment:
       CISTERN_CONFIG: /etc/cistern/cistern.yaml
-      CISTERN_TMPDIR: /tmp/cistern
+      CISTERN_TMPDIR: /tmp
     volumes:
       - ../../examples/cistern.yaml:/etc/cistern/cistern.yaml:ro
     tmpfs:

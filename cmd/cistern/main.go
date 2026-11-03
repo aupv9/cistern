@@ -51,19 +51,19 @@ func main() {
 const usage = `Usage: cistern <command> [flags]
 
 Commands:
-  backup    Chạy backup ngay            (--job J | --all)
-  restore   Khôi phục snapshot          --job J [--snapshot S] [--set k=v]... [--yes]
-  list      Liệt kê snapshot            --job J [--json]
-  verify    Kiểm tra snapshot           --job J [--snapshot S|all] [--json]
-  prune     Áp retention                (--job J | --all) [--dry-run] [--json]
-  check     Kiểm tra trước khi chạy     (--job J | --all)
-  daemon    Lập lịch và HTTP            [--listen :9464] [--grace 5m]
-  drivers   Liệt kê driver
-  keygen    Tạo khóa X25519             [--out FILE]
-  version   In phiên bản
+  backup    Run a backup now                  --job J | --all
+  restore   Restore a snapshot                --job J [--snapshot S] [--set k=v]... [--yes]
+  list      List snapshots                    --job J [--json]
+  verify    Verify snapshots                  --job J [--snapshot S|all] [--json]
+  prune     Apply retention                   --job J | --all [--dry-run] [--json]
+  check     Check tools, source, repository   --job J | --all
+  daemon    Run schedules, serve HTTP         [--listen ADDR] [--grace 5m]
+  drivers   List drivers
+  keygen    Create an age X25519 key          [--out FILE]
+  version   Print the version
 
-Global: -c FILE (mặc định $CISTERN_CONFIG hoặc /etc/cistern/cistern.yaml)
-Log: CISTERN_LOG_FORMAT=json để in log JSON.
+Every command accepts -c FILE (default: $CISTERN_CONFIG, then /etc/cistern/cistern.yaml).
+Set CISTERN_LOG_FORMAT=json for JSON logs. Exit codes: 0 success, 1 failure, 2 usage error.
 `
 
 type cli struct {
@@ -100,70 +100,70 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 		}
 	case "keygen":
-		out := fs.String("out", "", "ghi private key vào file (quyền 0600, không ghi đè)")
+		out := fs.String("out", "", "write the private key to FILE (mode 0600, never overwritten)")
 		if err = fs.Parse(rest); err == nil {
 			err = c.keygen(*out)
 		}
 	case "daemon":
-		listen := fs.String("listen", "", "địa chỉ HTTP (mặc định metrics.listen trong cấu hình, :9464)")
-		grace := fs.Duration("grace", 5*time.Minute, "thời gian chờ job khi dừng")
+		listen := fs.String("listen", "", "HTTP address (default: metrics.listen, :9464)")
+		grace := fs.Duration("grace", 5*time.Minute, "how long to wait for running jobs on shutdown")
 		if err = fs.Parse(rest); err == nil {
 			err = c.daemon(*listen, *grace)
 		}
 	case "backup", "check":
-		job := fs.String("job", "", "tên job")
-		all := fs.Bool("all", false, "mọi job")
+		job := fs.String("job", "", "job name")
+		all := fs.Bool("all", false, "all jobs")
 		if err = fs.Parse(rest); err == nil {
 			if err = exactlyOne(*job, *all); err == nil {
 				err = c.forJobs(cmd, *job, *all)
 			}
 		}
 	case "prune":
-		job := fs.String("job", "", "tên job")
-		all := fs.Bool("all", false, "mọi job")
-		dryRun := fs.Bool("dry-run", false, "chỉ in, không xóa")
-		asJSON := fs.Bool("json", false, "xuất JSON")
+		job := fs.String("job", "", "job name")
+		all := fs.Bool("all", false, "all jobs")
+		dryRun := fs.Bool("dry-run", false, "show what would be removed, remove nothing")
+		asJSON := fs.Bool("json", false, "JSON output")
 		if err = fs.Parse(rest); err == nil {
 			if err = exactlyOne(*job, *all); err == nil {
 				err = c.prune(*job, *all, *dryRun, *asJSON)
 			}
 		}
 	case "list":
-		job := fs.String("job", "", "tên job (bắt buộc)")
-		asJSON := fs.Bool("json", false, "xuất JSON")
+		job := fs.String("job", "", "job name (required)")
+		asJSON := fs.Bool("json", false, "JSON output")
 		if err = fs.Parse(rest); err == nil {
 			if *job == "" {
-				err = fmt.Errorf("%w: thiếu --job", errUsage)
+				err = fmt.Errorf("%w: --job is required", errUsage)
 			} else {
 				err = c.list(*job, *asJSON)
 			}
 		}
 	case "verify":
-		job := fs.String("job", "", "tên job (bắt buộc)")
-		snap := fs.String("snapshot", "latest", "latest, ID, tiền tố ID, hoặc all")
-		asJSON := fs.Bool("json", false, "xuất JSON")
+		job := fs.String("job", "", "job name (required)")
+		snap := fs.String("snapshot", "latest", "latest, a snapshot ID, a unique ID prefix, or all")
+		asJSON := fs.Bool("json", false, "JSON output")
 		if err = fs.Parse(rest); err == nil {
 			if *job == "" {
-				err = fmt.Errorf("%w: thiếu --job", errUsage)
+				err = fmt.Errorf("%w: --job is required", errUsage)
 			} else {
 				err = c.verify(*job, *snap, *asJSON)
 			}
 		}
 	case "restore":
-		job := fs.String("job", "", "tên job (bắt buộc)")
-		snap := fs.String("snapshot", "latest", "latest, ID đầy đủ hoặc tiền tố duy nhất")
+		job := fs.String("job", "", "job name (required)")
+		snap := fs.String("snapshot", "latest", "latest, a snapshot ID or a unique ID prefix")
 		var sets kvFlag
-		fs.Var(&sets, "set", "ghi đè tham số job, k=v (lặp lại được)")
-		yes := fs.Bool("yes", false, "không hỏi xác nhận")
+		fs.Var(&sets, "set", "override a job parameter, k=v (repeatable)")
+		yes := fs.Bool("yes", false, "do not ask for confirmation")
 		if err = fs.Parse(rest); err == nil {
 			if *job == "" {
-				err = fmt.Errorf("%w: thiếu --job", errUsage)
+				err = fmt.Errorf("%w: --job is required", errUsage)
 			} else {
 				err = c.restore(*job, *snap, sets, *yes)
 			}
 		}
 	default:
-		fmt.Fprintf(stderr, "cistern: lệnh không hợp lệ %q\n\n%s", cmd, usage)
+		fmt.Fprintf(stderr, "cistern: unknown command %q\n\n%s", cmd, usage)
 		return exitUsage
 	}
 
@@ -185,7 +185,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 func exactlyOne(job string, all bool) error {
 	if (job == "") == !all {
-		return fmt.Errorf("%w: cần đúng một trong --job hoặc --all", errUsage)
+		return fmt.Errorf("%w: exactly one of --job or --all is required", errUsage)
 	}
 	return nil
 }
@@ -527,7 +527,7 @@ type kvFlag []string
 func (k *kvFlag) String() string { return strings.Join(*k, ",") }
 func (k *kvFlag) Set(v string) error {
 	if !strings.Contains(v, "=") {
-		return fmt.Errorf("--set cần dạng k=v, nhận %q", v)
+		return fmt.Errorf("--set needs k=v, got %q", v)
 	}
 	*k = append(*k, v)
 	return nil

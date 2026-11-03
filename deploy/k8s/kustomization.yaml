@@ -4,4 +4,4 @@ namespace: cistern
 resources:
   - cronjob-backup.yaml
   - prometheus-rules.yaml
-# TODO: cronjob-verify.yaml (mount private key), cronjob-prune.yaml (credential có quyền xóa), networkpolicy.yaml
+# TODO: cronjob-verify.yaml (mounts the private key), cronjob-prune.yaml (credentials allowed to delete), networkpolicy.yaml
