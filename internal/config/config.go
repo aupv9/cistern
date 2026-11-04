@@ -143,6 +143,7 @@ type Job struct {
 	Hooks            Hooks             `yaml:"hooks"`
 	Params           map[string]string `yaml:"params"`
 	RestoreTargets   []*RestoreTarget  `yaml:"restore_targets"`
+	Drill            *Drill            `yaml:"drill"`
 }
 
 type RestoreTarget struct {
@@ -482,6 +483,7 @@ func (c *Config) normalize() error {
 				}
 			}
 		}
+		errs = append(errs, j.normalizeDrill(p)...)
 	}
 	if c.Server != nil {
 		errs = append(errs, c.Server.normalize(c)...)

@@ -13,7 +13,7 @@ the configuration accepts `-c FILE` (or `--config FILE`); without it Cistern use
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | The operation failed (including verify finding a corrupted artifact, or any job failing with `--all`) |
+| `1` | The operation failed (including verify finding a corrupted artifact, a drill check failing, or any job failing with `--all`) |
 | `2` | Usage error: unknown command or flag, missing `--job`, both `--job` and `--all` |
 
 ## `backup`
@@ -54,6 +54,22 @@ Checks snapshots of a job (default: the newest).
 
 Exits with code 1 if any check fails.
 
+## `drill`
+
+```
+cistern drill --job NAME [--snapshot latest|ID|PREFIX] [--json]
+cistern drills --job NAME [--json]
+```
+
+Runs a [restore drill](drills.md): restores the snapshot (default: the newest) into the job's
+`drill.target` under `drill.restore_suffix`, runs the checks and drops what it created. Needs a
+`drill` section in the job and the private key for encrypted snapshots. Prints one line per check
+(`CHECK KIND STATUS EXPECTED ACTUAL MESSAGE`), the ten largest tables with their row counts and a
+summary; `--json` prints the full result. Exits with code 1 when any check fails, like `verify`.
+The drill takes the job lock and writes a run record, so it appears in the Admin UI.
+
+`cistern drills` lists the past drills of a job from the run records, newest first.
+
 ## `restore`
 
 ```
@@ -89,7 +105,8 @@ Prune also deletes run records (`_admin/runs/<job>/`) older than `run_history_da
 but always keeps the newest 30 records of each operation; `0` keeps them forever. Unreadable run
 records are kept. A run record that cannot be deleted (for example because of Object Lock) is logged
 and skipped and never fails the prune. The summary line ends with `run records removed N` (`would
-remove` with `--dry-run`); `--json` reports `run_records_removed`.
+remove` with `--dry-run`); `--json` reports `run_records_removed`, the `stored_bytes` of each
+snapshot and the `freed_bytes` of the removed ones.
 
 ## `check`
 

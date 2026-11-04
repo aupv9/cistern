@@ -23,6 +23,7 @@ const (
 	ActionLogout          = "auth.logout"
 	ActionBackup          = "backup.run"
 	ActionVerify          = "verify.run"
+	ActionDrill           = "drill.run"
 	ActionPrune           = "prune.run"
 	ActionRestore         = "restore.run"
 	ActionRestoreRequest  = "restore.request"
@@ -31,12 +32,13 @@ const (
 	ActionApprovalExpired = "approval.expire"
 	ActionRunFinish       = "run.finish"
 	ActionAccessDenied    = "access.denied"
+	ActionConfigView      = "config.view"
 )
 
 var auditActions = map[string]bool{
 	ActionLogin: true, ActionAuthDenied: true, ActionLogout: true, ActionBackup: true, ActionVerify: true, ActionPrune: true,
 	ActionRestore: true, ActionRestoreRequest: true, ActionApprove: true, ActionReject: true,
-	ActionApprovalExpired: true, ActionRunFinish: true, ActionAccessDenied: true,
+	ActionApprovalExpired: true, ActionRunFinish: true, ActionAccessDenied: true, ActionDrill: true, ActionConfigView: true,
 }
 
 const (

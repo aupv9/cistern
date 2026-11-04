@@ -2,20 +2,21 @@ import { Link, useLocation, useNavigate, useParams } from '@tanstack/react-route
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { approvalsQuery, logout, type Me } from '~/api/queries'
 import { setCsrfToken } from '~/api/client'
-import { describeRoles } from '~/lib/roles'
+import { can, describeRoles } from '~/lib/roles'
 import { initials } from '~/lib/format'
 import { Mark, Slash } from './Icons'
 import { ThemeToggle } from './ThemeToggle'
 
 export const DOCS_URL = 'https://github.com/aupv9/cistern'
 
-type TabKey = 'overview' | 'jobs' | 'approvals' | 'audit'
+type TabKey = 'overview' | 'jobs' | 'approvals' | 'audit' | 'config'
 
 function activeTab(pathname: string): TabKey | null {
   if (pathname === '/') return 'overview'
   if (pathname.startsWith('/jobs') || pathname.startsWith('/runs')) return 'jobs'
   if (pathname.startsWith('/approvals')) return 'approvals'
   if (pathname.startsWith('/audit')) return 'audit'
+  if (pathname.startsWith('/config')) return 'config'
   return null
 }
 
@@ -47,12 +48,13 @@ export function Header({ me }: { me: Me }) {
     },
   })
 
-  const tabs: { key: TabKey; to: '/' | '/jobs' | '/approvals' | '/audit'; label: string }[] = [
+  const tabs: { key: TabKey; to: '/' | '/jobs' | '/approvals' | '/audit' | '/config'; label: string }[] = [
     { key: 'overview', to: '/', label: 'Overview' },
     { key: 'jobs', to: '/jobs', label: 'Jobs' },
     { key: 'approvals', to: '/approvals', label: 'Approvals' },
     { key: 'audit', to: '/audit', label: 'Audit log' },
   ]
+  if (can(me.roles, 'config')) tabs.push({ key: 'config', to: '/config', label: 'Configuration' })
 
   return (
     <header className="hdr">

@@ -9,7 +9,7 @@ const me: Me = {
   roles: ['viewer', 'approver'],
   csrf_token: 't',
   session_expires_at: '2026-11-03T16:00:00Z',
-  deployment: { name: 'production', version: '0.3.0', timezone: 'UTC', daemon: { configured: true, reachable: true } },
+  deployment: { name: 'production', version: '0.3.0', timezone: 'UTC', daemon: { configured: true, reachable: true }, features: { prune: false, drills: false } },
 }
 
 const approval: Approval = {

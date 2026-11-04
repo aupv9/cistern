@@ -66,10 +66,23 @@ markers but still exist until their retention expires; list them with
 `aws s3api list-object-versions --prefix <prefix>/<job>/<snapshot-id>/` and download with
 `--version-id`.
 
+## Restore drills: evidence of recoverability
+
+Checksums prove a snapshot is intact; only a restore proves it is usable. Configure a
+[restore drill](drills.md) for every critical job: the daemon then regularly restores the newest
+snapshot into a scratch target, compares table and row counts with the dump, runs your SQL checks and
+drops the copy. Each drill leaves a run record with every check, the row counts and the duration, so
+the Admin UI (and `cistern drills --job J`) shows when a backup was last proven restorable and how
+long it took. `CisternDrillFailing` and `CisternDrillStale` alert when that evidence is missing.
+
+Automatic drills do not replace practising the manual path below: they use Cistern and the private
+key on the backup host.
+
 ## Checklist for a restore drill
 
 - [ ] The private key can be found and decrypts an artifact
-- [ ] The newest snapshot of every critical job restores into a scratch database or prefix
+- [ ] The newest snapshot of every critical job restores into a scratch database or prefix (a passed
+      `drill` within `max_age_days` covers this and the next item)
 - [ ] Row counts or checksums match the source
 - [ ] The time from start to a usable restore is within your RTO
 - [ ] The steps above were done without Cistern at least once

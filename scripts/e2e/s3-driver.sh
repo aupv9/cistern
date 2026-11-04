@@ -50,6 +50,9 @@ jobs:
       path_style: true
       access_key_id: ${AWS_ACCESS_KEY_ID}
       secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    restore_targets:
+      - { name: scratch, production: false, set: { restore_prefix: drills/ } }
+    drill: { target: scratch }
 YAML
 cistern check --job site
 
@@ -72,6 +75,18 @@ cistern list --job site --json | grep -q "\"$FIRST\"" || fail "backup 2 should d
 
 step "verify all snapshots"
 cistern verify --job site --snapshot all
+
+step "restore drill into data/drills/drill/, compare with index.json, delete"
+cistern drill --job site
+cistern drill --job site --json > drill.json
+[ "$(grep -c '"status": "passed"' drill.json)" = 3 ] || { cat drill.json; fail "expected 3 passed drill checks"; }
+grep -q '"actual": "6 objects, ' drill.json || { cat drill.json; fail "objects check"; }
+[ -z "$(keys drills/)" ] || fail "drill copy left behind: $(keys drills/)"
+echo mine | aws s3 cp --quiet - s3://data/drills/drill/not-a-drill.txt
+if cistern drill --job site 2>err.txt; then fail "drill replaced objects without a marker"; fi
+grep -q "left untouched" err.txt || { cat err.txt; fail "unexpected error"; }
+[ "$(keys drills/)" = drills/drill/not-a-drill.txt ] || fail "unmarked objects touched: $(keys drills/)"
+aws s3 rm --quiet s3://data/drills/drill/not-a-drill.txt
 
 step "restore latest → data/restored/, compare sha256 of every object"
 cistern restore --job site --set restore_prefix=restored/ --yes

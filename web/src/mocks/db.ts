@@ -3,6 +3,9 @@ import type {
   Alert,
   Approval,
   AuditEntry,
+  DrillCheck,
+  DrillResult,
+  DrillTable,
   JobDetail,
   JobHealth,
   Manifest,
@@ -45,7 +48,20 @@ const roleOf: Record<string, Role[]> = {
 type JobSeed = {
   detail: Omit<
     JobDetail,
-    'health' | 'snapshots' | 'stored_bytes' | 'recent_backups' | 'last_success' | 'last_failure' | 'last_failure_error' | 'last_verify' | 'next_run' | 'current_run' | 'running_op'
+    | 'health'
+    | 'snapshots'
+    | 'stored_bytes'
+    | 'recent_backups'
+    | 'last_success'
+    | 'last_failure'
+    | 'last_failure_error'
+    | 'last_verify'
+    | 'next_run'
+    | 'current_run'
+    | 'running_op'
+    | 'last_drill'
+    | 'last_drill_result'
+    | 'drill_schedule'
   >
   hour: number
   minute: number
@@ -60,6 +76,9 @@ type JobSeed = {
   verifyLagDays?: number
   artifacts: (bytes: number) => { name: string; plain: number; stored: number }[]
   incremental?: boolean
+  history?: number
+  historyFailAt?: number[]
+  historyError?: string
   host: string
   version: string
 }
@@ -78,6 +97,7 @@ export type MockDb = {
   sims: Record<string, Sim>
   seeds: Record<string, JobSeed>
   counter: number
+  configLoadedAt: string
 }
 
 function hex(seed: number, len = 4): string {
@@ -128,6 +148,7 @@ const seeds: JobSeed[] = [
       object_lock: { mode: 'COMPLIANCE', days: 7 },
       encryption: { mode: 'age-x25519', recipients: 1 },
       source: { host: 'pg-orders.internal', port: '5432', databases: 'orders' },
+      drill: { schedule: '0 5 * * 0', target: 'staging', restore_suffix: '_drill', max_age_days: 35, keep: false, checks: 2 },
       restore_targets: [
         { name: 'staging', description: 'staging-db.internal:5432', production: false },
         { name: 'production', description: 'pg-orders.internal:5432', production: true },
@@ -142,6 +163,9 @@ const seeds: JobSeed[] = [
     growth: 0.014 * GIB,
     durationMs: 3 * MIN + 30_000,
     failAt: [],
+    history: 62,
+    historyFailAt: [9, 31, 52],
+    historyError: 'pg_dump: error: connection to server at "pg-orders.internal" (10.20.3.5), port 5432 failed: timeout expired',
     artifacts: (bytes) => [
       { name: 'db/orders.dump', plain: Math.round(bytes * 3.4), stored: bytes },
       { name: 'globals.sql', plain: 61 * KIB, stored: 18 * KIB },
@@ -192,6 +216,7 @@ const seeds: JobSeed[] = [
       object_lock: { mode: 'COMPLIANCE', days: 7 },
       encryption: { mode: 'age-x25519', recipients: 1 },
       source: { host: 'pg-billing.internal', port: '5432', databases: 'billing,ledger' },
+      drill: { schedule: '0 6 * * 1', target: 'staging', restore_suffix: '_drill', max_age_days: 35, keep: false, checks: 1 },
       restore_targets: [
         { name: 'staging', description: 'staging-db.internal:5432', production: false },
         { name: 'production', description: 'pg-billing.internal:5432', production: true },
@@ -229,6 +254,7 @@ const seeds: JobSeed[] = [
       object_lock: { mode: 'COMPLIANCE', days: 7 },
       encryption: { mode: 'age-x25519', recipients: 1 },
       source: { bucket: 'app-uploads', prefix: '', endpoint: 'https://s3.storage.internal' },
+      drill: { schedule: '0 6 1 * *', target: 'restore-bucket', restore_suffix: '_drill', max_age_days: 35, keep: false },
       restore_targets: [
         { name: 'restore-bucket', description: 'Bucket app-uploads-restore', production: false },
         { name: 'production', description: 'Bucket app-uploads', production: true },
@@ -324,9 +350,10 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
       session_expires_at: iso(nowMs + 8 * HOUR),
       deployment: {
         name: 'production',
-        version: '0.3.0',
+        version: '0.5.0',
         timezone: TIMEZONE,
-        daemon: { configured: true, reachable: true, version: '0.3.0' },
+        daemon: { configured: true, reachable: true, version: '0.5.0' },
+        features: { prune: true, drills: true },
       },
     },
     signedIn: true,
@@ -338,6 +365,7 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
     sims: {},
     seeds: {},
     counter: 1000,
+    configLoadedAt: iso(nowMs - 3 * DAY - 5 * HOUR - 12 * MIN),
   }
 
   let seedN = 1
@@ -345,12 +373,43 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
     const name = seed.detail.name
     db.seeds[name] = seed
     const slots: number[] = []
-    for (let d = 40; d >= 0; d -= 1) {
+    for (let d = 40 + Math.ceil((seed.history ?? 0) / (1 + (seed.extraHours?.length ?? 0))); d >= 0; d -= 1) {
       const dayStart = day0 - d * DAY
       slots.push(dayStart + seed.hour * HOUR + seed.minute * MIN)
       for (const h of seed.extraHours ?? []) slots.push(dayStart + h * HOUR + seed.minute * MIN)
     }
-    const past = slots.filter((s) => s <= nowMs - 2 * MIN).slice(-30)
+    const finishedSlots = slots.filter((s) => s <= nowMs - 2 * MIN)
+    const past = finishedSlots.slice(-30)
+    const older = seed.history ? finishedSlots.slice(-30 - seed.history, -30) : []
+    older.forEach((start, k) => {
+      seedN += 1
+      const i = k - older.length
+      const failed = seed.historyFailAt?.includes(k) ?? false
+      const jitter = (Number.parseInt(hex(seedN * 31, 4), 16) % 41) * 1000
+      const duration = Math.round(seed.durationMs + (i / 30) * 0.2 * seed.durationMs + jitter)
+      const bytes = Math.round(seed.baseBytes + seed.growth * i + ((seedN * 104729) % 23) * 0.002 * GIB)
+      const run: Run = {
+        id: `run_${hex(seedN, 8)}`,
+        job: name,
+        op: 'backup',
+        state: failed ? 'failed' : 'succeeded',
+        trigger: 'schedule',
+        requested_by: scheduler,
+        queued_at: iso(start),
+        started_at: iso(start),
+      }
+      if (failed) {
+        run.error = seed.historyError ?? 'the run failed'
+        run.duration_ms = 30_000 + (seedN % 7) * 1000
+      } else {
+        run.duration_ms = duration
+        run.snapshot = snapshotId(start, seedN)
+        run.stored_bytes = bytes
+      }
+      run.finished_at = iso(start + (run.duration_ms ?? 0))
+      run.log_tail = seedRunLog(name, 'backup', run.snapshot, run.state, start, run.duration_ms ?? 0, run.error)
+      db.runs.push(run)
+    })
     if (name === 'billing-db') {
       past.shift()
       past.push(nowMs - 3 * MIN)
@@ -364,7 +423,7 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
       const isLast = i === past.length - 1
       const running = name === 'billing-db' && isLast
       const failed = seed.failAt.includes(i)
-      const jitter = ((seedN * 7919) % 41) * 1000
+      const jitter = (Number.parseInt(hex(seedN * 31, 4), 16) % 41) * 1000
       const duration = Math.round(seed.durationMs + (i / 30) * 0.2 * seed.durationMs + jitter)
       const bytes = Math.round(seed.baseBytes + seed.growth * i * (seed.extraHours ? 0.5 : 1))
       const runId = `run_${hex(seedN, 8)}`
@@ -418,7 +477,13 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
     })
     snaps.reverse()
     applyRetention(snaps, seed.detail.retention, nowMs)
-    const kept = snaps.filter((s) => s.kept_by.length > 0 || snaps.indexOf(s) < 3)
+    const kept = snaps.filter(
+      (s) =>
+        s.kept_by.length > 0 ||
+        snaps.indexOf(s) < 3 ||
+        !seed.detail.prune_after_backup ||
+        (s.lock_until !== undefined && new Date(s.lock_until).getTime() > nowMs),
+    )
     const verifyLag = seed.verifyLagDays ?? 0
     let firstEligible = true
     for (const s of kept) {
@@ -475,6 +540,7 @@ export function createMockDb(nowMs: number = Date.now()): MockDb {
     db.jobs.push(detail)
   }
 
+  seedDrills(db, day0, nowMs)
   seedHumanActivity(db, day0, nowMs)
   refreshDerived(db)
   return db
@@ -505,6 +571,407 @@ function applyRetention(snaps: SnapshotSummary[], retention: JobDetail['retentio
   }
 }
 
+type TableSeed = [database: string, name: string, rows: number]
+
+const DRILL_TABLES: Record<string, TableSeed[]> = {
+  'orders-db': [
+    ['orders', 'order_events', 486_212],
+    ['orders', 'order_items', 312_904],
+    ['orders', 'orders', 128_377],
+    ['orders', 'payments', 126_950],
+    ['orders', 'shipments', 98_410],
+    ['orders', 'addresses', 52_118],
+    ['orders', 'customers', 41_207],
+    ['orders', 'product_prices', 9_840],
+    ['orders', 'refunds', 6_815],
+    ['orders', 'products', 3_412],
+    ['orders', 'coupons', 1_204],
+    ['orders', 'tax_rates', 212],
+    ['orders', 'schema_migrations', 187],
+    ['orders', 'carriers', 18],
+  ],
+  'billing-db': [
+    ['ledger', 'entries', 4_218_660],
+    ['billing', 'invoice_lines', 1_904_331],
+    ['billing', 'invoices', 402_118],
+    ['billing', 'payments', 389_904],
+    ['billing', 'subscriptions', 61_420],
+    ['ledger', 'accounts', 12_406],
+    ['billing', 'plans', 48],
+    ['ledger', 'periods', 37],
+    ['billing', 'schema_migrations', 96],
+    ['ledger', 'schema_migrations', 41],
+  ],
+}
+
+type DrillPlan = { at: number; outcome: 'passed' | 'failed' }
+
+function drillPlans(job: string, day0: number, nowMs: number): DrillPlan[] {
+  const weekday = (ms: number) => new Date(ms + TZ_OFFSET_MS).getUTCDay()
+  const out: DrillPlan[] = []
+  if (job === 'orders-db' || job === 'billing-db') {
+    const dow = job === 'orders-db' ? 0 : 1
+    const hour = job === 'orders-db' ? 5 : 6
+    for (let d = 0; d < 60 && out.length < 7; d += 1) {
+      const start = day0 - d * DAY
+      if (weekday(start) !== dow) continue
+      const at = start + hour * HOUR
+      if (at > nowMs - 10 * MIN) continue
+      out.push({ at, outcome: 'passed' })
+    }
+    out.reverse()
+    if (job === 'orders-db' && out.length > 4) out[out.length - 4]!.outcome = 'failed'
+    if (job === 'billing-db' && out.length) out[out.length - 1]!.outcome = 'failed'
+  }
+  if (job === 'uploads') {
+    for (let m = 0; m < 3; m += 1) {
+      const n = new Date(nowMs + TZ_OFFSET_MS)
+      const at = Date.UTC(n.getUTCFullYear(), n.getUTCMonth() - m, 1) - TZ_OFFSET_MS + 6 * HOUR
+      if (at < nowMs - 10 * MIN) out.unshift({ at, outcome: 'passed' })
+    }
+  }
+  return out
+}
+
+function snapshotBefore(db: MockDb, job: string, at: number): { id: string; bytes: number } | null {
+  const runs = db.runs
+    .filter((r) => r.job === job && r.op === 'backup' && r.state === 'succeeded' && r.snapshot && new Date(r.finished_at ?? 0).getTime() <= at)
+    .sort((a, b) => (b.finished_at ?? '').localeCompare(a.finished_at ?? ''))
+  const r = runs[0]
+  return r?.snapshot ? { id: r.snapshot, bytes: r.stored_bytes ?? GIB } : null
+}
+
+export function buildDrillResult(
+  db: MockDb,
+  run: Run,
+  outcome: 'passed' | 'failed',
+  startMs: number,
+  durationMs: number,
+): DrillResult {
+  const job = db.jobs.find((j) => j.name === run.job)
+  const seed = db.seeds[run.job]
+  const target = job?.drill?.target ?? 'staging'
+  const suffix = job?.drill?.restore_suffix ?? '_drill'
+  const snap = (run.snapshot
+    ? { id: run.snapshot, bytes: (db.snapshots[run.job] ?? []).find((s) => s.id === run.snapshot)?.stored_bytes ?? GIB }
+    : snapshotBefore(db, run.job, startMs)) ?? { id: snapshotId(startMs - 4 * HOUR, Math.floor(startMs / 1000) % 9973), bytes: Math.round(seed?.baseBytes ?? GIB) }
+  const ageDays = Math.max(0, (db.now() - startMs) / DAY)
+  const scale = 1 - ageDays * 0.0012
+  const seedTables = DRILL_TABLES[run.job] ?? []
+  const tables: DrillTable[] = seedTables.map(([database, name, rows]) => ({
+    database,
+    name,
+    rows: run.job === 'billing-db' && outcome === 'failed' && name === 'entries' ? 0 : Math.round(rows * scale),
+  }))
+  tables.sort((a, b) => b.rows - a.rows)
+  const checks: DrillCheck[] = []
+  const restoreBytes = Math.round(snap.bytes * 3.4)
+  if (job?.driver === 's3') {
+    const objects = 2359 - Math.round(ageDays * 2)
+    checks.push(
+      { name: `Restore into ${target}`, kind: 'restore', status: 'passed', expected: 'All objects written', actual: `${objects.toLocaleString('en-US')} objects written` },
+      { name: 'Object count matches the manifest', kind: 'objects', status: 'passed', expected: objects.toLocaleString('en-US'), actual: objects.toLocaleString('en-US') },
+      { name: 'Checksums of a sample of 200 objects', kind: 'objects', status: 'passed', expected: '200 match', actual: '200 match' },
+      { name: `Delete the ${suffix} prefix`, kind: 'cleanup', status: 'passed', expected: 'Deleted', actual: 'Deleted' },
+    )
+  } else {
+    const dbs = (job?.source.databases ?? 'app').split(',')
+    checks.push({
+      name: `Restore ${dbs.map((d) => `${d}${suffix}`).join(', ')} into ${target}`,
+      kind: 'restore',
+      status: 'passed',
+      expected: `${dbs.length} ${dbs.length === 1 ? 'database' : 'databases'}`,
+      actual: `${dbs.length} restored`,
+    })
+    checks.push({ name: 'Table count', kind: 'tables', status: 'passed', expected: `at least ${seedTables.length}`, actual: String(tables.length) })
+    if (run.job === 'orders-db') {
+      const orders = tables.find((t) => t.name === 'orders')?.rows ?? 0
+      checks.push({ name: 'orders.orders has rows', kind: 'rows', status: 'passed', expected: 'at least 100,000', actual: orders.toLocaleString('en-US') })
+      checks.push(
+        outcome === 'failed'
+          ? {
+              name: 'Orders in the 24 hours before the snapshot',
+              kind: 'sql',
+              status: 'failed',
+              expected: 'more than 0',
+              actual: '0',
+              message: 'the snapshot was taken while the order service was paused',
+            }
+          : { name: 'Orders in the 24 hours before the snapshot', kind: 'sql', status: 'passed', expected: 'more than 0', actual: (1700 + Math.round(ageDays * 7)).toLocaleString('en-US') },
+      )
+      checks.push({ name: 'No orphaned order items', kind: 'sql', status: 'passed', expected: '0', actual: '0' })
+    } else if (run.job === 'billing-db') {
+      const entries = tables.find((t) => t.name === 'entries')?.rows ?? 0
+      checks.push(
+        outcome === 'failed'
+          ? { name: 'ledger.entries has rows', kind: 'rows', status: 'failed', expected: 'at least 1,000,000', actual: '0', message: 'the table exists but is empty after the restore' }
+          : { name: 'ledger.entries has rows', kind: 'rows', status: 'passed', expected: 'at least 1,000,000', actual: entries.toLocaleString('en-US') },
+      )
+      checks.push({
+        name: 'Ledger balances to zero',
+        kind: 'sql',
+        status: outcome === 'failed' ? 'skipped' : 'passed',
+        expected: '0.00',
+        actual: outcome === 'failed' ? undefined : '0.00',
+        message: outcome === 'failed' ? 'skipped after a failed check' : undefined,
+      })
+    }
+    checks.push({ name: `Drop the ${suffix} databases`, kind: 'cleanup', status: 'passed', expected: 'Dropped', actual: 'Dropped' })
+  }
+  const failed = checks.find((c) => c.status === 'failed')
+  return {
+    run_id: run.id,
+    job: run.job,
+    snapshot: snap.id,
+    target,
+    state: failed ? 'failed' : 'succeeded',
+    trigger: run.trigger,
+    requested_by: run.requested_by,
+    started_at: iso(startMs),
+    finished_at: iso(startMs + durationMs),
+    duration_ms: durationMs,
+    restored_bytes: job?.driver === 's3' ? Math.round((seed?.baseBytes ?? GIB) * 1.02) : restoreBytes,
+    checks,
+    tables: job?.driver === 's3' ? undefined : tables,
+    cleaned_up: true,
+    error: failed ? `check "${failed.name}" failed: expected ${failed.expected}, got ${failed.actual}` : undefined,
+  }
+}
+
+function drillLog(result: DrillResult): string[] {
+  const t0 = stampAt(new Date(result.started_at).getTime())
+  const t1 = stampAt(new Date(result.finished_at ?? result.started_at).getTime())
+  return [
+    `${t0}  INFO  drill started  job=${result.job} snapshot=${result.snapshot} target=${result.target}`,
+    ...result.checks.map((c) => `${t1}  ${c.status === 'failed' ? 'ERROR' : 'INFO '} check ${c.kind} ${c.status}  name="${c.name}"${c.actual ? ` actual="${c.actual}"` : ''}`),
+    `${t1}  ${result.state === 'failed' ? 'ERROR drill failed ' : 'INFO  drill passed '} job=${result.job}`,
+  ]
+}
+
+function seedDrills(db: MockDb, day0: number, nowMs: number) {
+  let n = 9000
+  for (const job of db.jobs) {
+    if (!job.drill) continue
+    for (const plan of drillPlans(job.name, day0, nowMs)) {
+      n += 1
+      const durationMs = (job.driver === 's3' ? 9 * MIN : job.name === 'billing-db' ? 6 * MIN : 4 * MIN) + ((n * 7919) % 50) * 1000
+      const run: Run = {
+        id: `run_${hex(n, 8)}`,
+        job: job.name,
+        op: 'drill',
+        state: 'succeeded',
+        trigger: 'schedule',
+        requested_by: scheduler,
+        target: job.drill.target,
+        queued_at: iso(plan.at),
+        started_at: iso(plan.at),
+      }
+      const result = buildDrillResult(db, run, plan.outcome, plan.at, durationMs)
+      run.snapshot = result.snapshot
+      run.state = result.state
+      run.finished_at = result.finished_at
+      run.duration_ms = durationMs
+      run.drill = result
+      run.error = result.error
+      run.log_tail = drillLog(result)
+      db.runs.push(run)
+      if (nowMs - plan.at < 14 * DAY) {
+        addAudit(db, {
+          time: result.finished_at!,
+          actor: scheduler,
+          action: 'run.finish',
+          result: result.state === 'succeeded' ? 'succeeded' : 'failed',
+          job: job.name,
+          snapshot: result.snapshot,
+          target: result.target,
+          run_id: run.id,
+          error: result.error,
+          summary: `${job.name} restore drill on schedule ${result.state === 'succeeded' ? 'passed' : 'failed'}`,
+        })
+      }
+    }
+  }
+}
+
+export function drillResults(db: MockDb, job: string): DrillResult[] {
+  return db.runs
+    .filter((r) => r.job === job && r.op === 'drill' && r.drill)
+    .map((r) => r.drill!)
+    .sort((a, b) => b.started_at.localeCompare(a.started_at))
+}
+
+function drillAlert(db: MockDb, job: JobDetail, nowMs: number): Alert | null {
+  if (!job.drill) return null
+  const results = drillResults(db, job.name)
+  const newest = results[0]
+  if (newest && newest.state === 'failed') {
+    return { kind: 'drill_failing', job: job.name, message: newest.error ?? 'The last restore drill failed.', since: newest.finished_at ?? newest.started_at }
+  }
+  const passed = results.find((r) => r.state === 'succeeded')
+  const at = passed ? new Date(passed.finished_at ?? passed.started_at).getTime() : 0
+  if (nowMs - at > job.drill.max_age_days * DAY) {
+    return { kind: 'drill_stale', job: job.name, message: `No passed restore drill for more than ${job.drill.max_age_days} days.`, since: passed?.finished_at ?? iso(nowMs) }
+  }
+  return null
+}
+
+export function prunePreview(db: MockDb, jobName: string) {
+  const nowMs = db.now()
+  const snaps = db.snapshots[jobName] ?? []
+  const items = snaps.map((s) => ({
+    snapshot: s.id,
+    finished_at: s.finished_at,
+    action: (s.kept_by.length ? 'keep' : 'remove') as 'keep' | 'remove',
+    reasons: [...s.kept_by],
+    stored_bytes: s.stored_bytes,
+    lock_until: s.lock_until,
+  }))
+  const removed = items.filter((i) => i.action === 'remove')
+  const removedIds = new Set(removed.map((i) => i.snapshot))
+  return {
+    job: jobName,
+    items,
+    kept: items.length - removed.length,
+    removed: removed.length,
+    freed_bytes: removed.reduce((a, i) => a + (i.stored_bytes ?? 0), 0),
+    locked: removed.filter((i) => i.lock_until && new Date(i.lock_until).getTime() > nowMs).length,
+    run_records_removed: db.runs.filter((r) => r.job === jobName && r.snapshot && removedIds.has(r.snapshot) && r.op !== 'restore').length,
+  }
+}
+
+function finalizePrune(db: MockDb, run: Run) {
+  const preview = prunePreview(db, run.job)
+  const nowMs = db.now()
+  const removable = preview.items.filter((i) => i.action === 'remove' && !(i.lock_until && new Date(i.lock_until).getTime() > nowMs))
+  const ids = new Set(removable.map((i) => i.snapshot))
+  db.snapshots[run.job] = (db.snapshots[run.job] ?? []).filter((s) => !ids.has(s.id))
+  const records = db.runs.filter((r) => r.job === run.job && r.snapshot && ids.has(r.snapshot) && r.op !== 'restore' && r.id !== run.id)
+  const recordIds = new Set(records.map((r) => r.id))
+  db.runs = db.runs.filter((r) => !recordIds.has(r.id))
+  run.prune = {
+    kept: preview.kept,
+    removed: removable.length,
+    errors: preview.locked,
+    freed_bytes: removable.reduce((a, i) => a + (i.stored_bytes ?? 0), 0),
+    run_records_removed: records.length,
+  }
+  if (preview.locked) run.error = `${preview.locked} snapshots are still under Object Lock and were not removed`
+}
+
+const CONFIG_LINES = [
+  '# Cistern configuration, production',
+  'repositories:',
+  '  s3-main:',
+  '    type: s3',
+  '    bucket: cistern-backups',
+  '    endpoint: https://s3.storage.internal',
+  '    region: ap-southeast-1',
+  '    access_key_id: ${S3_ACCESS_KEY_ID}',
+  '    secret_access_key: ${S3_SECRET_ACCESS_KEY}',
+  '    object_lock: { mode: COMPLIANCE, days: 7 }',
+  '',
+  'encryption:',
+  '  recipients_file: /etc/cistern/recipients.txt',
+  '',
+  'scheduler:',
+  '  timezone: Asia/Ho_Chi_Minh',
+  '',
+  'defaults:',
+  '  repository: s3-main',
+  '  timeout: 2h',
+  '  prune_after_backup: true',
+  '',
+  'server:',
+  '  name: production',
+  '  listen: ":8480"',
+  '  session_key: ${CISTERN_SESSION_KEY}',
+  '  daemon: { url: "http://cistern-daemon:9465", token: "${CISTERN_DAEMON_TOKEN}" }',
+  '  prune: { enabled: true }',
+  '  oidc:',
+  '    issuer: https://sso.example.com/realms/ops',
+  '    client_id: cistern',
+  '    client_secret: ${OIDC_CLIENT_SECRET}',
+  '  roles:',
+  '    operator: [backup-operators]',
+  '    restorer: [dba]',
+  '    approver: [dba-leads]',
+  '    admin: [platform-admins]',
+  '',
+  'jobs:',
+  '  - name: orders-db',
+  '    driver: postgres',
+  '    schedule: "0 2 * * *"',
+  '    verify_schedule: "0 3 * * *"',
+  '    retention: { daily: 7, weekly: 4, monthly: 6 }',
+  '    params: { host: pg-orders.internal, user: backup, password: "${ORDERS_DB_PASSWORD}", databases: [orders] }',
+  '    restore_targets:',
+  '      - { name: staging, description: "staging-db.internal:5432", set: { host: staging-db.internal } }',
+  '      - { name: production, description: "pg-orders.internal:5432", production: true }',
+  '    drill:',
+  '      schedule: "0 5 * * 0"',
+  '      target: staging',
+  '      max_age_days: 35',
+  '      checks:',
+  '        - { name: Orders in the 24 hours before the snapshot, sql: "SELECT count(*) FROM orders WHERE created_at > now() - interval \'1 day\'", expect: "> 0" }',
+  '        - { name: No orphaned order items, sql: "SELECT count(*) FROM order_items i LEFT JOIN orders o ON o.id = i.order_id WHERE o.id IS NULL", expect: "= 0" }',
+  '',
+  '  - name: shop-db',
+  '    driver: mysql',
+  '    schedule: "30 2 * * *"',
+  '    verify_schedule: "30 3 * * 0"',
+  '    retention: { last: 3, daily: 7, weekly: 4 }',
+  '    params: { host: mysql-shop.internal, user: backup, password: <redacted>, databases: [shop] }',
+  '    restore_targets:',
+  '      - { name: staging, description: "mysql-staging.internal:3306" }',
+  '',
+  '  - name: billing-db',
+  '    driver: postgres',
+  '    schedule: "0 2,14 * * *"',
+  '    verify_schedule: "0 4 * * *"',
+  '    retention: { last: 4, daily: 14, monthly: 12 }',
+  '    params: { host: pg-billing.internal, user: backup, password: "${BILLING_DB_PASSWORD}", databases: [billing, ledger] }',
+  '    restore_targets:',
+  '      - { name: staging, description: "staging-db.internal:5432" }',
+  '      - { name: production, description: "pg-billing.internal:5432", production: true }',
+  '    drill:',
+  '      schedule: "0 6 * * 1"',
+  '      target: staging',
+  '      checks:',
+  '        - { name: Ledger balances to zero, sql: "SELECT sum(amount) FROM ledger.entries", expect: "= 0" }',
+  '',
+  '  - name: uploads',
+  '    driver: s3',
+  '    schedule: "0 3 * * *"',
+  '    verify_schedule: "0 4 * * 6"',
+  '    prune_after_backup: false',
+  '    retention: { daily: 14, weekly: 8, monthly: 12 }',
+  '    params: { bucket: app-uploads, endpoint: https://s3.storage.internal, access_key_id: "${UPLOADS_KEY_ID}", secret_access_key: "${UPLOADS_SECRET}" }',
+  '    restore_targets:',
+  '      - { name: restore-bucket, description: "Bucket app-uploads-restore", set: { bucket: app-uploads-restore } }',
+  '      - { name: production, description: "Bucket app-uploads", production: true }',
+  '    drill: { schedule: "0 6 1 * *", target: restore-bucket }',
+  '',
+  '  - name: users-db',
+  '    driver: mysql',
+  '    schedule: "45 1 * * *"',
+  '    verify_schedule: "30 2 * * 0"',
+  '    retention: { daily: 7, weekly: 4, monthly: 3 }',
+  '    params: { host: mariadb-users.internal, user: backup, password: "${USERS_DB_PASSWORD}", databases: [users] }',
+  '    restore_targets:',
+  '      - { name: staging, description: "mysql-staging.internal:3306" }',
+  '      - { name: production, description: "mariadb-users.internal:3306", production: true }',
+]
+
+export function configView(db: MockDb) {
+  const line = CONFIG_LINES.findIndex((l) => l.includes('<redacted>')) + 1
+  return {
+    path: '/etc/cistern/cistern.yaml',
+    loaded_at: db.configLoadedAt,
+    yaml: CONFIG_LINES.join('\n') + '\n',
+    literal_secrets: [{ path: 'jobs[shop-db].params.password', line }],
+  }
+}
+
 function auditId(db: MockDb) {
   db.counter += 1
   return `aud_${db.counter}`
@@ -525,7 +992,7 @@ function seedHumanActivity(db: MockDb, day0: number, nowMs: number) {
   const users = db.snapshots['users-db'] ?? []
 
   for (const r of db.runs) {
-    if (r.trigger !== 'schedule' || r.state === 'running') continue
+    if (r.trigger !== 'schedule' || r.state === 'running' || r.op === 'drill') continue
     const at = new Date(r.finished_at ?? r.started_at ?? 0).getTime()
     if (nowMs - at > 14 * DAY) continue
     const what =
@@ -833,6 +1300,13 @@ function computeHealth(job: JobDetail, nowMs: number): JobHealth {
   if (!ls && !lf) return 'never_run'
   if (lf > ls) return 'failing'
   if (nowMs - ls > 36 * HOUR) return 'stale'
+  if (job.drill) {
+    const r = job.last_drill_result
+    const last = job.last_drill
+    if ((r && r.state === 'failed') || (last && last.state === 'failed')) return 'drill_failing'
+    const passedAt = r && r.state === 'succeeded' ? new Date(r.finished_at ?? r.started_at).getTime() : 0
+    if (nowMs - passedAt > job.drill.max_age_days * DAY) return 'drill_failing'
+  }
   if (job.verify_schedule) {
     const lv = job.last_verify ? new Date(job.last_verify).getTime() : 0
     if (nowMs - lv > 8 * DAY) return 'verify_overdue'
@@ -899,6 +1373,47 @@ function finalizeRun(db: MockDb, run: Run, sim: Sim) {
   run.state = sim.outcome
   run.finished_at = iso(nowMs)
   run.duration_ms = sim.durationMs - 1500
+  if (run.op === 'drill') {
+    const result = buildDrillResult(db, run, sim.outcome === 'failed' ? 'failed' : 'passed', sim.startMs + 1500, sim.durationMs - 1500)
+    run.drill = result
+    run.snapshot = result.snapshot
+    run.state = result.state
+    run.error = result.error
+    run.log_tail = [...(run.log_tail ?? []), ...drillLog(result).slice(1)].slice(-200)
+    addAudit(db, {
+      time: iso(nowMs),
+      actor: run.requested_by ?? scheduler,
+      roles: run.requested_by ? rolesFor(run.requested_by) : undefined,
+      action: 'run.finish',
+      result: result.state === 'succeeded' ? 'succeeded' : 'failed',
+      job: run.job,
+      snapshot: run.snapshot,
+      target: run.target,
+      run_id: run.id,
+      error: run.error,
+      summary: `${run.job} restore drill ${result.state === 'succeeded' ? 'passed' : 'failed'}`,
+    })
+    return
+  }
+  if (run.op === 'prune') {
+    finalizePrune(db, run)
+    const p = run.prune!
+    run.log_tail = [
+      ...(run.log_tail ?? []),
+      `${stampAt(nowMs)}  INFO  prune finished  job=${run.job} kept=${p.kept} removed=${p.removed} errors=${p.errors}`,
+    ].slice(-200)
+    addAudit(db, {
+      time: iso(nowMs),
+      actor: run.requested_by ?? scheduler,
+      roles: run.requested_by ? rolesFor(run.requested_by) : undefined,
+      action: 'run.finish',
+      result: 'succeeded',
+      job: run.job,
+      run_id: run.id,
+      summary: `${run.job} prune removed ${p.removed} snapshots${p.errors ? `, ${p.errors} still locked` : ''}`,
+    })
+    return
+  }
   const job = db.jobs.find((j) => j.name === run.job)
   const seed = db.seeds[run.job]
   const stamp = stampAt(nowMs)
@@ -983,6 +1498,12 @@ export function refreshDerived(db: MockDb) {
     const verified = snaps.map((s) => s.last_verify?.at).filter((x): x is string => !!x).sort()
     job.last_verify = verified.at(-1)
     job.next_run = active ? undefined : cronNext(job.schedule, nowMs)
+    job.drill_schedule = job.drill?.schedule
+    const drills = runs.filter((r) => r.op === 'drill')
+    const newestDrill = drills.at(-1)
+    job.last_drill = newestDrill ? { state: newestDrill.state, at: newestDrill.finished_at ?? newestDrill.started_at ?? newestDrill.queued_at ?? iso(nowMs) } : undefined
+    const finished = [...drills].reverse().find((r) => r.drill)
+    job.last_drill_result = finished?.drill ? structuredClone(finished.drill) : undefined
     job.health = computeHealth(job, nowMs)
   }
   for (const a of db.approvals) {
@@ -1011,6 +1532,10 @@ export function alertsFor(db: MockDb): Alert[] {
         since: job.last_verify ?? iso(db.now()),
       })
     }
+  }
+  for (const job of db.jobs) {
+    const a = drillAlert(db, job, db.now())
+    if (a) out.push(a)
   }
   if (db.me.deployment.daemon.configured && !db.me.deployment.daemon.reachable) {
     out.push({ kind: 'daemon_unreachable', job: '', message: 'The daemon is not answering.', since: iso(db.now()) })

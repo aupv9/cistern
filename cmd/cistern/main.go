@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"cistern/internal/admin"
 	"cistern/internal/config"
 	"cistern/internal/cron"
 	"cistern/internal/crypt"
@@ -56,6 +57,8 @@ Commands:
   restore   Restore a snapshot                --job J [--snapshot S] [--set k=v]... [--yes]
   list      List snapshots                    --job J [--json]
   verify    Verify snapshots                  --job J [--snapshot S|all] [--json]
+  drill     Run a restore drill               --job J [--snapshot S] [--json]
+  drills    List past restore drills          --job J [--json]
   prune     Apply retention                   --job J | --all [--dry-run] [--json]
   check     Check tools, source, repository   --job J | --all
   daemon    Run schedules, serve HTTP         [--listen ADDR] [--grace 5m]
@@ -156,6 +159,23 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 				err = fmt.Errorf("%w: --job is required", errUsage)
 			} else {
 				err = c.verify(*job, *snap, *asJSON)
+			}
+		}
+	case "drill", "drills":
+		job := fs.String("job", "", "job name (required)")
+		snap := "latest"
+		if cmd == "drill" {
+			fs.StringVar(&snap, "snapshot", "latest", "latest, a snapshot ID or a unique ID prefix")
+		}
+		asJSON := fs.Bool("json", false, "JSON output")
+		if err = fs.Parse(rest); err == nil {
+			switch {
+			case *job == "":
+				err = fmt.Errorf("%w: --job is required", errUsage)
+			case cmd == "drill":
+				err = c.drill(*job, snap, *asJSON)
+			default:
+				err = c.drills(*job, *asJSON)
 			}
 		}
 	case "restore":
@@ -325,7 +345,11 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 	}
 	var tasks []daemon.Task
 	for _, j := range e.Cfg.Jobs {
-		for op, expr := range map[string]string{"backup": j.Schedule, "verify": j.VerifySchedule} {
+		ops := map[string]string{"backup": j.Schedule, "verify": j.VerifySchedule}
+		if j.Drill != nil {
+			ops["drill"] = j.Drill.Schedule
+		}
+		for op, expr := range ops {
 			if expr == "" {
 				continue
 			}
@@ -337,7 +361,7 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 		}
 	}
 	if len(tasks) == 0 {
-		e.Log.Warn("no job has schedule or verify_schedule: daemon only serves /metrics, /healthz and /status")
+		e.Log.Warn("no job has schedule, verify_schedule or drill.schedule: daemon only serves /metrics, /healthz and /status")
 	}
 	e.RefreshMetrics(c.ctx)
 	dc := e.Cfg.Daemon
@@ -461,6 +485,91 @@ func (c *cli) verify(job, snap string, asJSON bool) error {
 		return errReported
 	}
 	return nil
+}
+
+func (c *cli) drill(job, snap string, asJSON bool) error {
+	e, err := c.engine()
+	if err != nil {
+		return err
+	}
+	res, err := e.Drill(c.ctx, job, snap)
+	if res == nil {
+		return err
+	}
+	if asJSON {
+		enc := json.NewEncoder(c.stdout)
+		enc.SetIndent("", "  ")
+		if jerr := enc.Encode(res); jerr != nil {
+			return jerr
+		}
+	} else {
+		fmt.Fprintf(c.stdout, "drill of %s, snapshot %s, target %s\n", res.Job, res.Snapshot, res.Target)
+		tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "CHECK\tKIND\tSTATUS\tEXPECTED\tACTUAL\tMESSAGE")
+		for _, ch := range res.Checks {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", ch.Name, ch.Kind, strings.ToUpper(ch.Status), dash(ch.Expected), dash(ch.Actual), ch.Message)
+		}
+		tw.Flush()
+		if len(res.Tables) > 0 {
+			tw = tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "\nDATABASE\tTABLE\tROWS")
+			for i, t := range res.Tables {
+				if i == 10 {
+					fmt.Fprintf(tw, "…\t%d more tables\t\n", res.TotalTables-10)
+					break
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%d\n", t.Database, t.Name, t.Rows)
+			}
+			tw.Flush()
+		}
+		fmt.Fprintf(c.stdout, "restored %s, %d tables, %d rows, cleaned up: %v, %s\n", humanBytes(res.RestoredBytes), res.TotalTables, res.TotalRows, res.CleanedUp, strings.ToUpper(res.State))
+	}
+	if err != nil {
+		fmt.Fprintln(c.stderr, "cistern:", err)
+		return errReported
+	}
+	return nil
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func (c *cli) drills(job string, asJSON bool) error {
+	e, err := c.engine()
+	if err != nil {
+		return err
+	}
+	recs, err := e.DrillHistory(c.ctx, job)
+	if err != nil && len(recs) == 0 {
+		return err
+	}
+	out := []*admin.DrillResult{}
+	for _, r := range recs {
+		if d := r.Run().Drill; d != nil {
+			out = append(out, d)
+		}
+	}
+	if asJSON {
+		enc := json.NewEncoder(c.stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "RUN\tSNAPSHOT\tSTATE\tCHECKS\tRESTORED\tTRIGGER\tERROR")
+	for _, d := range out {
+		passed := 0
+		for _, ch := range d.Checks {
+			if ch.Status == admin.CheckPassed {
+				passed++
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d/%d passed\t%s\t%s\t%s\n", d.RunID, dash(d.Snapshot), d.State, passed, len(d.Checks), humanBytes(d.RestoredBytes), d.Trigger, d.Error)
+	}
+	return tw.Flush()
 }
 
 func (c *cli) restore(job, snap string, sets kvFlag, yes bool) error {

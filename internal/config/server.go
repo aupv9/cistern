@@ -61,8 +61,13 @@ type Server struct {
 	Daemon             DaemonClient   `yaml:"daemon"`
 	RateLimit          RateLimit      `yaml:"rate_limit"`
 	TrustedProxies     []string       `yaml:"trusted_proxies"`
+	Prune              ServerPrune    `yaml:"prune"`
 
 	TrustedPrefixes []netip.Prefix `yaml:"-"`
+}
+
+type ServerPrune struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type RateLimit struct {

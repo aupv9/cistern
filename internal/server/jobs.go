@@ -27,6 +27,7 @@ const (
 	HealthFailing       = "failing"
 	HealthRunning       = "running"
 	HealthStale         = "stale"
+	HealthDrillFailing  = "drill_failing"
 	HealthVerifyOverdue = "verify_overdue"
 	HealthNeverRun      = "never_run"
 )
@@ -52,16 +53,32 @@ type jobSummary struct {
 	Repository       string     `json:"repository"`
 	Schedule         string     `json:"schedule,omitempty"`
 	VerifySchedule   string     `json:"verify_schedule,omitempty"`
+	DrillSchedule    string     `json:"drill_schedule,omitempty"`
 	Health           string     `json:"health"`
 	RunningOp        string     `json:"running_op,omitempty"`
 	LastSuccess      *time.Time `json:"last_success,omitempty"`
 	LastFailure      *time.Time `json:"last_failure,omitempty"`
 	LastFailureError string     `json:"last_failure_error,omitempty"`
 	LastVerify       *time.Time `json:"last_verify,omitempty"`
+	LastDrill        *lastDrill `json:"last_drill,omitempty"`
 	NextRun          *time.Time `json:"next_run,omitempty"`
 	Snapshots        int        `json:"snapshots"`
 	StoredBytes      int64      `json:"stored_bytes"`
 	RecentBackups    []runPoint `json:"recent_backups"`
+}
+
+type lastDrill struct {
+	State string    `json:"state"`
+	At    time.Time `json:"at"`
+}
+
+type drillConfigView struct {
+	Schedule      string `json:"schedule,omitempty"`
+	Target        string `json:"target"`
+	RestoreSuffix string `json:"restore_suffix"`
+	MaxAgeDays    int    `json:"max_age_days"`
+	Keep          bool   `json:"keep"`
+	Checks        int    `json:"checks"`
 }
 
 type objectLockView struct {
@@ -91,14 +108,16 @@ type encryptionView struct {
 
 type jobDetail struct {
 	jobSummary
-	Retention        retentionView     `json:"retention"`
-	PruneAfterBackup bool              `json:"prune_after_backup"`
-	TimeoutMS        int64             `json:"timeout_ms"`
-	ObjectLock       *objectLockView   `json:"object_lock,omitempty"`
-	Encryption       encryptionView    `json:"encryption"`
-	Source           map[string]string `json:"source"`
-	RestoreTargets   []targetView      `json:"restore_targets"`
-	CurrentRun       *admin.Run        `json:"current_run,omitempty"`
+	Retention        retentionView      `json:"retention"`
+	PruneAfterBackup bool               `json:"prune_after_backup"`
+	TimeoutMS        int64              `json:"timeout_ms"`
+	ObjectLock       *objectLockView    `json:"object_lock,omitempty"`
+	Encryption       encryptionView     `json:"encryption"`
+	Source           map[string]string  `json:"source"`
+	RestoreTargets   []targetView       `json:"restore_targets"`
+	CurrentRun       *admin.Run         `json:"current_run,omitempty"`
+	Drill            *drillConfigView   `json:"drill,omitempty"`
+	LastDrillResult  *admin.DrillResult `json:"last_drill_result,omitempty"`
 }
 
 type lastVerifyView struct {
@@ -161,6 +180,11 @@ func (s *Server) summarize(job *config.Job, d *jobData, dv daemonView, now time.
 		Name: job.Name, Driver: job.Driver, Repository: job.Repository, Schedule: job.Schedule,
 		VerifySchedule: job.VerifySchedule, Snapshots: len(d.snaps), RecentBackups: []runPoint{},
 	}
+	if job.Drill != nil {
+		sum.DrillSchedule = job.Drill.Schedule
+	}
+	var lastDrillAt, lastDrillPass time.Time
+	var lastDrillState, drillErr string
 	var lastSuccess, lastFailure, lastVerify, lastVerifyFail, firstSuccess time.Time
 	var failErr, verifyErr string
 	covered := map[string]bool{}
@@ -197,6 +221,13 @@ func (s *Server) summarize(job *config.Job, d *jobData, dv daemonView, now time.
 			if r.Status == admin.StateFailed && r.FinishedAt.After(lastFailure) {
 				lastFailure, failErr = r.FinishedAt, r.Error
 			}
+		case r.Op == admin.OpDrill:
+			if r.FinishedAt.After(lastDrillAt) || lastDrillAt.IsZero() {
+				lastDrillAt, lastDrillState, drillErr = r.FinishedAt, r.Status, r.Error
+			}
+			if r.Status == admin.StateSucceeded && r.FinishedAt.After(lastDrillPass) {
+				lastDrillPass = r.FinishedAt
+			}
 		case isVerifyOp(r.Op):
 			if r.Status == admin.StateSucceeded && r.FinishedAt.After(lastVerify) {
 				lastVerify = r.FinishedAt
@@ -223,6 +254,9 @@ func (s *Server) summarize(job *config.Job, d *jobData, dv daemonView, now time.
 	if !lastFailure.IsZero() {
 		sum.LastFailureError = failErr
 	}
+	if !lastDrillAt.IsZero() {
+		sum.LastDrill = &lastDrill{State: lastDrillState, At: lastDrillAt.UTC()}
+	}
 	sum.NextRun = dv.next(job.Name, admin.OpBackup)
 	if ro := dv.running(job.Name); ro != nil {
 		sum.RunningOp = ro.Op
@@ -236,6 +270,23 @@ func (s *Server) summarize(job *config.Job, d *jobData, dv daemonView, now time.
 		verifyRef = firstSuccess
 	}
 	verifyOverdue := job.VerifySchedule != "" && !verifyRef.IsZero() && now.Sub(verifyRef) > verifyStaleAfter
+	var drillFailing, drillStale bool
+	if dr := job.Drill; dr != nil {
+		drillFailing = lastDrillState == admin.StateFailed
+		ref := lastDrillPass
+		if ref.IsZero() {
+			ref = firstSuccess
+		}
+		maxAge := time.Duration(dr.MaxAgeDays) * 24 * time.Hour
+		drillStale = !ref.IsZero() && now.Sub(ref) > maxAge
+		if drillFailing {
+			alerts = append(alerts, alertView{Kind: "drill_failing", Job: job.Name, Since: lastDrillAt.UTC(), Message: "The last restore drill failed: " + safeText(drillErr, 300)})
+		}
+		if drillStale {
+			alerts = append(alerts, alertView{Kind: "drill_stale", Job: job.Name, Since: ref.Add(maxAge).UTC(),
+				Message: "No passed restore drill for more than " + strconv.Itoa(dr.MaxAgeDays) + " days"})
+		}
+	}
 	if failing {
 		alerts = append(alerts, alertView{Kind: "backup_failing", Job: job.Name, Since: lastFailure.UTC(), Message: "The last backup failed: " + safeText(failErr, 300)})
 	}
@@ -257,6 +308,8 @@ func (s *Server) summarize(job *config.Job, d *jobData, dv daemonView, now time.
 		sum.Health = HealthFailing
 	case stale:
 		sum.Health = HealthStale
+	case drillFailing || drillStale:
+		sum.Health = HealthDrillFailing
 	case verifyOverdue:
 		sum.Health = HealthVerifyOverdue
 	default:
@@ -307,7 +360,7 @@ func (s *Server) overview(w http.ResponseWriter, rq *request) {
 	} else {
 		s.log.Warn("listing approvals failed", "err", err)
 	}
-	q := auditQuery{From: now.Add(-7 * 24 * time.Hour), To: now.Add(time.Minute), Limit: 10, Exclude: map[string]bool{ActionLogin: true, ActionLogout: true}}
+	q := auditQuery{From: now.Add(-7 * 24 * time.Hour), To: now.Add(time.Minute), Limit: 10, Exclude: map[string]bool{ActionLogin: true, ActionLogout: true, ActionConfigView: true}}
 	if entries, _, err := s.audit.page(ctx, q); err == nil {
 		resp.RecentActivity = entries
 	} else {
@@ -370,6 +423,15 @@ func (s *Server) jobDetail(w http.ResponseWriter, rq *request) {
 	}
 	for _, t := range j.Targets() {
 		det.RestoreTargets = append(det.RestoreTargets, targetView{Name: t.Name, Description: t.Description, Production: t.IsProduction()})
+	}
+	if dr := j.Drill; dr != nil {
+		det.Drill = &drillConfigView{Schedule: dr.Schedule, Target: dr.Target, RestoreSuffix: dr.RestoreSuffix, MaxAgeDays: dr.MaxAgeDays, Keep: dr.Keep, Checks: len(dr.Checks)}
+	}
+	for i := len(d.runs) - 1; i >= 0; i-- {
+		if r := d.runs[i]; r.Op == admin.OpDrill {
+			det.LastDrillResult = admin.DrillResultOf(r.Run(), r.Drill)
+			break
+		}
 	}
 	if ro := dv.running(j.Name); ro != nil && s.client != nil {
 		if run, err := s.client.Run(ctx, ro.RunID); err == nil {
@@ -496,7 +558,7 @@ func intParam(rq *request, name string, def, max int) (int, bool) {
 	return n, true
 }
 
-var validOps = map[string]bool{admin.OpBackup: true, admin.OpVerify: true, admin.OpRestore: true, admin.OpPrune: true}
+var validOps = map[string]bool{admin.OpBackup: true, admin.OpVerify: true, admin.OpRestore: true, admin.OpPrune: true, admin.OpDrill: true}
 
 func (s *Server) jobRuns(w http.ResponseWriter, rq *request) {
 	j, ok := s.jobFor(w, rq)
@@ -505,7 +567,7 @@ func (s *Server) jobRuns(w http.ResponseWriter, rq *request) {
 	}
 	op := rq.URL.Query().Get("op")
 	if op != "" && !validOps[op] {
-		invalid(w, map[string]string{"op": "must be backup, verify, restore or prune"})
+		invalid(w, map[string]string{"op": "must be backup, verify, restore, prune or drill"})
 		return
 	}
 	limit, ok := intParam(rq, "limit", 30, 200)

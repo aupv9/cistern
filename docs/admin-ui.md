@@ -38,9 +38,9 @@ Roles come from the OIDC groups claim through `server.roles`. A user with no map
 | Role | Can | Includes |
 | --- | --- | --- |
 | `viewer` | Read everything: overview, jobs, snapshots, runs, approvals, audit log | — |
-| `operator` | Start backups and verifies | viewer |
-| `restorer` | Restore into non-production targets; request restores into production targets | operator, viewer |
-| `admin` | Everything above, and decide approvals | restorer, operator, viewer |
+| `operator` | Start backups and verifies, preview a prune, view the configuration | viewer |
+| `restorer` | Run restore drills, restore into non-production targets; request restores into production targets | operator, viewer |
+| `admin` | Everything above, decide approvals, and run a prune when `server.prune.enabled` is on | restorer, operator, viewer |
 | `approver` | Approve or reject restore requests | viewer |
 
 - `viewer < operator < restorer < admin` are cumulative; `approver` is separate.
@@ -52,9 +52,10 @@ Roles come from the OIDC groups claim through `server.roles`. A user with no map
 | Endpoint | Role |
 | --- | --- |
 | `GET /api/v1/me`, `POST /api/v1/auth/logout` | any signed-in user |
-| `GET /api/v1/overview`, `/jobs/…`, `/runs/…`, `/approvals/…`, `/audit`, `/audit/export` | viewer |
-| `POST /api/v1/jobs/{job}/backup`, `POST /api/v1/jobs/{job}/verify` | operator |
-| `POST /api/v1/jobs/{job}/restore/preview`, `POST /api/v1/jobs/{job}/restore` | restorer |
+| `GET /api/v1/overview`, `/jobs/…` (including `/jobs/{job}/drills`), `/runs/…`, `/approvals/…`, `/audit`, `/audit/export` | viewer |
+| `POST /api/v1/jobs/{job}/backup`, `POST /api/v1/jobs/{job}/verify`, `POST /api/v1/jobs/{job}/prune/preview`, `GET /api/v1/config` | operator |
+| `POST /api/v1/jobs/{job}/drill`, `POST /api/v1/jobs/{job}/restore/preview`, `POST /api/v1/jobs/{job}/restore` | restorer |
+| `POST /api/v1/jobs/{job}/prune` | admin, and only with `server.prune.enabled: true` |
 | `POST /api/v1/approvals/{id}/approve`, `…/reject` | approver or admin, not the requester |
 
 ## Restore targets
@@ -88,6 +89,52 @@ jobs:
 - The daemon resolves the target again from its own configuration and refuses the run if it differs
   from what the server sent. Secret values never travel from the server to the daemon.
 
+## Restore drills
+
+A job with a [`drill` section](drills.md) shows a *Restore drill* card: the configuration (target,
+suffix, schedule, number of SQL checks), the last result with its evidence ("restored and checked …,
+N tables, M rows") and the recent drills. A restorer can run a drill now
+(`POST /api/v1/jobs/{job}/drill`, optional `{"snapshot": "…"}`, default `latest`); it is dispatched to
+the daemon like a backup, audited as `drill.run` and, when it ends, `run.finish`. The run page shows
+every check with its expected and actual value, and the largest restored tables with their row
+counts. `GET /api/v1/jobs/{job}/drills` lists past drills from the run records, newest first.
+
+A drill always restores into the configured non-production target under the drill suffix, so it
+needs no approval. Jobs whose driver does not support drills, or without a `drill` section, answer
+`422`. `deployment.features.drills` in `GET /api/v1/me` is true when any job has a drill.
+
+## Prune
+
+`POST /api/v1/jobs/{job}/prune/preview` (operator) shows what a prune would keep and remove, why
+(the retention rules that keep each snapshot), the stored bytes it would free, which snapshots are
+still under Object Lock (`lock_until`; removing them fails until then) and how many old run records
+would go. The server computes it itself from the repository with the same retention code as
+`cistern prune --dry-run`; it deletes nothing and takes no lock.
+
+Running a prune from the UI is **off by default**: the daemon would need permission to delete
+snapshots, which a hardened deployment does not grant (see
+[Deployment](deployment.md)). With `server.prune.enabled: true`, an admin can run it
+(`POST /api/v1/jobs/{job}/prune` with `reason` and `confirm_job`); it is dispatched to the daemon,
+audited as `prune.run` and `run.finish`, and the run shows a summary (kept, removed, errors, freed
+bytes, run records removed). Without the setting the endpoint answers `403 forbidden` and the UI
+offers the CLI command instead. `deployment.features.prune` tells the UI which applies.
+
+## Configuration view
+
+`GET /api/v1/config` (operator) returns the server's configuration file **as written**: it is read
+again from disk, `${VAR}` references are kept and never expanded, and every secret written literally
+into the file is replaced by `<redacted>`. Secrets are the known secret fields
+(`password`, `passwd`, `token`, `api_token`, `secret_access_key`, `session_token`, `session_key`,
+`client_secret`), any key that looks like a secret (contains `password`, `secret`, `token`, `key`,
+`credential`, `passphrase`, `auth`, `cert`, `private`, except names ending in `_file`, `_path`,
+`_dir`, `_id` or `_claim`), the password in URLs with user info, the path of webhook URLs, and the
+default in `${VAR:-default}`. `chat_id` and `access_key_id` are not secret.
+
+`literal_secrets` lists every place where a secret is written into the file instead of referenced
+from the environment (`jobs[orders-db].params.password`, line 42), so they can be moved to
+variables. Comments are shown as written: do not put secrets in comments. Every successful read is
+audited as `config.view`.
+
 ## Approvals
 
 A restore into a production target creates an approval request instead of running:
@@ -109,7 +156,7 @@ A restore into a production target creates an approval request instead of runnin
 
 ## Audit log
 
-Every write action, sign-in, sign-out and denial creates one entry:
+Every write action, sign-in, sign-out, denial and configuration view creates one entry:
 
 ```
 <prefix>/_admin/audit/YYYY/MM/DD/<YYYYMMDDTHHMMSS.nnnnnnnnnZ>-<rand>.json
@@ -131,26 +178,28 @@ Every write action, sign-in, sign-out and denial creates one entry:
 | `auth.login`, `auth.logout` | Sign-in (including dev login), sign-out |
 | `auth.denied` | Signed in at the identity provider, but no group maps to a role |
 | `access.denied` | A signed-in user called an endpoint their roles do not allow, or tried to decide their own request |
-| `backup.run`, `verify.run`, `restore.run` | An operation was accepted (or could not be started) |
+| `backup.run`, `verify.run`, `drill.run`, `restore.run`, `prune.run` | An operation was accepted (or could not be started); `prune.run` carries the reason |
 | `restore.request` | A production restore is waiting for approval |
 | `approval.approve`, `approval.reject`, `approval.expire` | Decisions |
 | `run.finish` | An operation started from the UI finished (`succeeded` or `failed`) |
-| `prune.run` | Reserved: the UI cannot start prunes yet, so no entry has this action today |
+| `config.view` | Someone read the configuration view |
 
 The first page of `GET /api/v1/audit` also returns `total`, the number of matching entries, when
 there are at most 10000 of them.
 
 ## Run records
 
-After every backup, verify, restore and non-dry-run prune, from the CLI, a schedule or the UI, the
-engine writes a run record:
+After every backup, verify, restore, drill and non-dry-run prune, from the CLI, a schedule or the
+UI, the engine writes a run record:
 
 ```
 <prefix>/_admin/runs/<job>/<YYYYMMDDTHHMMSSZ>-<rand>.json
 ```
 
 It holds the run ID, job, operation, status, trigger (`schedule`, `cli`, `ui`), who requested it, the
-approval, snapshot, target, start and end time, duration, stored bytes and error. If writing it fails,
+approval, snapshot, target, start and end time, duration, stored bytes and error; a drill record
+also holds the drill result (checks, row counts, restored bytes, cleanup) and a prune record its
+summary (kept, removed, errors, freed bytes, run records removed). If writing it fails,
 the failure is logged and the operation keeps its result. On an S3 repository with `object_lock`,
 run records are locked for the repository's `object_lock.days`, like snapshots.
 
@@ -170,12 +219,14 @@ The thresholds match [deploy/k8s/monitoring](../deploy/k8s/monitoring/prometheus
 | `running` | The daemon is running an operation for the job |
 | `failing` | The last failed backup is newer than the last success |
 | `stale` | No successful backup for 36 hours |
+| `drill_failing` | The job has a `drill` section and its newest drill failed, or no drill passed within `drill.max_age_days` (counted from the first snapshot when it never had one) |
 | `verify_overdue` | The job has `verify_schedule` and no successful verify or restore for 8 days |
 | `never_run` | No snapshot and no run yet |
 | `healthy` | None of the above |
 
-Precedence: running > failing > stale > verify_overdue > healthy. Alerts: `backup_failing`,
-`backup_stale`, `verify_failing`, `verify_stale`, `daemon_unreachable`.
+Precedence: running > failing > stale > drill_failing > verify_overdue > healthy. Alerts:
+`backup_failing`, `backup_stale`, `verify_failing`, `verify_stale`, `drill_failing` (the newest
+drill failed), `drill_stale` (no passed drill within `max_age_days`), `daemon_unreachable`.
 
 The overview is one call that stays fast with hundreds of jobs: repository listings are cached for
 about 30 seconds (manifests and run records, which never change, are cached until restart) and the

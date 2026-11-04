@@ -66,6 +66,74 @@ echo "newest snapshot $SNAP of $(jq '.snapshots | length' <<<"$BODY")"
 api victor GET "/jobs/shop-db/snapshots/$SNAP"
 expect 200 "manifest"
 
+step "restore drill from the API"
+login dora restorer
+login ada admin
+api olivia POST /jobs/shop-db/drill '{}'
+expect 403 "operator drill"
+api dora POST /jobs/legacy-db/drill '{}'
+expect 422 "drill without a drill section"
+api dora POST /jobs/shop-db/drill "{\"snapshot\":\"$SNAP\"}"
+expect 202 "drill"
+DRILL=$(jq -r .run_id <<<"$BODY")
+wait_run dora "$DRILL"
+[ "$(jq -r '.drill.state' <<<"$BODY")" = succeeded ] || fail "drill result: $BODY"
+[ "$(jq -r '[.drill.checks[] | select(.status == "passed")] | length' <<<"$BODY")" = 5 ] || fail "drill checks: $(jq -c .drill.checks <<<"$BODY")"
+[ "$(jq -r '.drill.cleaned_up' <<<"$BODY")" = true ] || fail "drill not cleaned up"
+[ "$(jq -r '.drill.total_rows' <<<"$BODY")" = "$(psql_c -d shop -c 'SELECT count(*) FROM orders')" ] || fail "drill row count: $(jq -c .drill.tables <<<"$BODY")"
+[ "$(psql_c -c "SELECT count(*) FROM pg_database WHERE datname = 'shop_drill'")" = 0 ] || fail "shop_drill left behind"
+jq -r '.drill.checks[] | "  \(.status)\t\(.name)\t\(.actual // "")"' <<<"$BODY"
+api victor GET /jobs/shop-db/drills
+expect 200 "drills"
+[ "$(jq -r '.drills[0].run_id' <<<"$BODY")" = "$DRILL" ] || fail "drill history: $BODY"
+
+step "a drill never touches a database without its marker"
+psql_c -c "CREATE DATABASE shop_drill" >/dev/null
+api dora POST /jobs/shop-db/drill '{}'
+expect 202 "drill over a foreign database"
+id=$(jq -r .run_id <<<"$BODY")
+for _ in $(seq 1 60); do
+  api dora GET "/runs/$id"
+  case $(jq -r .state <<<"$BODY") in succeeded|failed) break ;; esac
+  sleep 1
+done
+[ "$(jq -r .state <<<"$BODY")" = failed ] || fail "drill over a foreign database: $BODY"
+jq -r .error <<<"$BODY" | grep -q "left untouched" || fail "unexpected drill error: $BODY"
+[ "$(psql_c -c "SELECT count(*) FROM pg_database WHERE datname = 'shop_drill'")" = 1 ] || fail "foreign shop_drill was dropped"
+psql_c -c "DROP DATABASE shop_drill" >/dev/null
+for _ in $(seq 1 40); do
+  api victor GET /overview
+  [ "$(jq -r '.jobs[] | select(.name == "shop-db") | .health' <<<"$BODY")" = drill_failing ] && break
+  sleep 1
+done
+[ "$(jq -r '.jobs[] | select(.name == "shop-db") | .health' <<<"$BODY")" = drill_failing ] || fail "shop-db health: $(jq -c '.jobs[] | select(.name == "shop-db")' <<<"$BODY")"
+jq -r '.alerts[] | select(.kind == "drill_failing") | "alert: \(.message)"' <<<"$BODY"
+api dora POST /jobs/shop-db/drill '{}'
+expect 202 "drill again"
+wait_run dora "$(jq -r .run_id <<<"$BODY")"
+
+step "prune preview and the prune switch"
+api victor POST /jobs/shop-db/prune/preview
+expect 403 "viewer prune preview"
+api olivia POST /jobs/shop-db/prune/preview
+expect 200 "prune preview"
+jq -c '{kept, removed, freed_bytes, locked, run_records_removed}' <<<"$BODY"
+[ "$(jq '.items | length' <<<"$BODY")" -ge 1 ] || fail "prune preview items: $BODY"
+api olivia POST /jobs/shop-db/prune '{"reason":"e2e","confirm_job":"shop-db"}'
+expect 403 "operator prune"
+api ada POST /jobs/shop-db/prune '{"reason":"e2e","confirm_job":"shop-db"}'
+expect 403 "prune while server.prune.enabled is false"
+jq -r .error.message <<<"$BODY" | grep -q "server.prune.enabled" || fail "prune message: $BODY"
+
+step "configuration view"
+api victor GET /config
+expect 403 "viewer config"
+api olivia GET /config
+expect 200 "config"
+jq -r .yaml <<<"$BODY" | grep -q 'password: "${PGPASSWORD}"' || fail "config view lost the \${PGPASSWORD} reference"
+grep -q "$DEV_UI_PG_PASSWORD" <<<"$BODY" && fail "config view leaked the database password"
+echo "config view: $(jq '.yaml | length' <<<"$BODY") bytes, literal secrets: $(jq -c '[.literal_secrets[].path]' <<<"$BODY")"
+
 step "restore into a non-production target"
 api rita POST /jobs/shop-db/restore/preview "{\"snapshot\":\"$SNAP\",\"target\":\"scratch\",\"restore_suffix\":\"_e2e\"}"
 expect 200 "preview"
@@ -108,7 +176,7 @@ for _ in $(seq 1 20); do
   [ "$(jq '.entries | length' <<<"$BODY")" -ge 3 ] && break
   sleep 1
 done
-for action in auth.login backup.run restore.run restore.request approval.approve approval.reject access.denied run.finish; do
+for action in auth.login backup.run drill.run config.view restore.run restore.request approval.approve approval.reject access.denied run.finish; do
   api victor GET "/audit?action=$action&limit=500"
   expect 200 "audit $action"
   n=$(jq '.entries | length' <<<"$BODY")

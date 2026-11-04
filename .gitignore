@@ -5,3 +5,4 @@ identity*.txt
 .idea/
 .dev-ui/
 .e2e-tmp/
+/dist/

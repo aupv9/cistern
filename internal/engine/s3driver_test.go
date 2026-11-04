@@ -21,7 +21,7 @@ import (
 	"cistern/internal/s3/s3test"
 )
 
-func s3DriverEngine(t *testing.T, srv *s3test.Server, withKey bool) (*Engine, *clock) {
+func s3DriverEngine(t *testing.T, srv *s3test.Server, withKey bool, extra ...string) (*Engine, *clock) {
 	t.Helper()
 	dir := t.TempDir()
 	id, _ := crypt.GenerateIdentity()
@@ -49,7 +49,7 @@ jobs:
       part_size_mb: 5
       access_key_id: ` + s3test.AccessKey + `
       secret_access_key: ` + s3test.SecretKey + `
-`
+` + strings.Join(extra, "")
 	cfgPath := filepath.Join(dir, "cistern.yaml")
 	os.WriteFile(cfgPath, []byte(src), 0o600)
 	cfg, err := config.Load(cfgPath)

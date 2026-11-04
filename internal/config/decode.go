@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -195,6 +196,15 @@ func decode(n *node, v reflect.Value, path string) error {
 			return fail("expected an integer, got %q", n.value)
 		}
 		v.SetInt(i)
+	case reflect.Float64:
+		if n.kind != scalarNode {
+			return fail("expected a number")
+		}
+		f, err := strconv.ParseFloat(n.value, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return fail("expected a number, got %q", n.value)
+		}
+		v.SetFloat(f)
 	default:
 		return fail("unsupported field type %s", v.Type())
 	}

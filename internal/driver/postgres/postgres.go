@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cistern/internal/driver"
@@ -119,7 +121,12 @@ func (pg *Postgres) hostLabel() string {
 }
 
 func (pg *Postgres) psql(ctx context.Context, db, script string, vars map[string]string) (string, error) {
+	return pg.psqlArgs(ctx, db, nil, script, vars)
+}
+
+func (pg *Postgres) psqlArgs(ctx context.Context, db string, extra []string, script string, vars map[string]string) (string, error) {
 	args := []string{"-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "--no-password", "-d", db}
+	args = append(args, extra...)
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
 		keys = append(keys, k)
@@ -281,7 +288,7 @@ func (pg *Postgres) dumpTo(ctx context.Context, sink driver.Sink, name string, c
 	return w.Close()
 }
 
-func (pg *Postgres) Restore(ctx context.Context, src driver.Source) error {
+func (pg *Postgres) selectDatabases(src driver.Source) ([]string, bool, error) {
 	inSnapshot := map[string]bool{}
 	var dbs []string
 	hasGlobals := false
@@ -304,9 +311,17 @@ func (pg *Postgres) Restore(ctx context.Context, src driver.Source) error {
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("databases not in snapshot: %s", strings.Join(missing, ", "))
+			return nil, hasGlobals, fmt.Errorf("databases not in snapshot: %s", strings.Join(missing, ", "))
 		}
 		dbs = pg.databases
+	}
+	return dbs, hasGlobals, nil
+}
+
+func (pg *Postgres) Restore(ctx context.Context, src driver.Source) error {
+	dbs, hasGlobals, err := pg.selectDatabases(src)
+	if err != nil {
+		return err
 	}
 	if len(dbs) == 0 && !(pg.restoreGlobals && hasGlobals) {
 		return errors.New("nothing to restore: snapshot has no matching database artifacts")
@@ -381,10 +396,17 @@ func (pg *Postgres) restoreDB(ctx context.Context, src driver.Source, artifact, 
 }
 
 func (pg *Postgres) pgRestore(ctx context.Context, src driver.Source, artifact, target string) error {
+	return pg.pgRestoreCounted(ctx, src, artifact, target, nil)
+}
 
+func (pg *Postgres) pgRestoreCounted(ctx context.Context, src driver.Source, artifact, target string, n *atomic.Int64) error {
 	rc, err := src.Open(artifact)
 	if err != nil {
 		return err
+	}
+	var in io.Reader = rc
+	if n != nil {
+		in = driver.CountingReader{R: rc, N: n}
 	}
 	args := []string{"--no-password", "--exit-on-error", "--dbname=" + target}
 	if pg.clean {
@@ -393,7 +415,7 @@ func (pg *Postgres) pgRestore(ctx context.Context, src driver.Source, artifact, 
 	if pg.noOwner {
 		args = append(args, "--no-owner", "--no-privileges")
 	}
-	if err := pg.run(ctx, driver.Command{Name: "pg_restore", Args: args, Env: pg.env(), Stdin: rc}); err != nil {
+	if err := pg.run(ctx, driver.Command{Name: "pg_restore", Args: args, Env: pg.env(), Stdin: in}); err != nil {
 		driver.Abort(rc)
 		return err
 	}

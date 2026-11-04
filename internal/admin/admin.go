@@ -58,6 +58,7 @@ const (
 	OpVerify  = "verify"
 	OpRestore = "restore"
 	OpPrune   = "prune"
+	OpDrill   = "drill"
 )
 
 var idRe = regexp.MustCompile(`^\d{8}T\d{6}Z-[0-9a-f]{8}$`)
@@ -81,20 +82,22 @@ func IDTime(id string) (time.Time, bool) {
 }
 
 type Record struct {
-	ID          string    `json:"id"`
-	Job         string    `json:"job"`
-	Op          string    `json:"op"`
-	Status      string    `json:"status"`
-	Trigger     string    `json:"trigger"`
-	RequestedBy *Actor    `json:"requested_by,omitempty"`
-	ApprovalID  string    `json:"approval_id,omitempty"`
-	Snapshot    string    `json:"snapshot,omitempty"`
-	Target      string    `json:"target,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
-	DurationMS  int64     `json:"duration_ms"`
-	StoredBytes int64     `json:"stored_bytes,omitempty"`
-	Error       string    `json:"error,omitempty"`
+	ID          string        `json:"id"`
+	Job         string        `json:"job"`
+	Op          string        `json:"op"`
+	Status      string        `json:"status"`
+	Trigger     string        `json:"trigger"`
+	RequestedBy *Actor        `json:"requested_by,omitempty"`
+	ApprovalID  string        `json:"approval_id,omitempty"`
+	Snapshot    string        `json:"snapshot,omitempty"`
+	Target      string        `json:"target,omitempty"`
+	StartedAt   time.Time     `json:"started_at"`
+	FinishedAt  time.Time     `json:"finished_at"`
+	DurationMS  int64         `json:"duration_ms"`
+	StoredBytes int64         `json:"stored_bytes,omitempty"`
+	Error       string        `json:"error,omitempty"`
+	Drill       *DrillReport  `json:"drill,omitempty"`
+	Prune       *PruneSummary `json:"prune,omitempty"`
 }
 
 type Run struct {
@@ -114,6 +117,8 @@ type Run struct {
 	StoredBytes *int64        `json:"stored_bytes,omitempty"`
 	Error       string        `json:"error,omitempty"`
 	Progress    *ProgressView `json:"progress,omitempty"`
+	Drill       *DrillResult  `json:"drill,omitempty"`
+	Prune       *PruneSummary `json:"prune,omitempty"`
 	LogTail     []string      `json:"log_tail,omitempty"`
 }
 
@@ -127,6 +132,13 @@ func (r *Record) Run() Run {
 	if r.StoredBytes > 0 {
 		v := r.StoredBytes
 		out.StoredBytes = &v
+	}
+	if r.Op == OpDrill && r.Drill != nil {
+		out.Drill = DrillResultOf(out, r.Drill)
+	}
+	if r.Op == OpPrune && r.Prune != nil {
+		p := *r.Prune
+		out.Prune = &p
 	}
 	return out
 }

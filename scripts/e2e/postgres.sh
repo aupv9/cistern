@@ -29,6 +29,13 @@ jobs:
       user: ${PGUSER}
       password: ${PGPASSWORD}
       databases: [orders, users]
+    restore_targets:
+      - { name: scratch, description: "same server, *_drill", production: false }
+    drill:
+      target: scratch
+      checks:
+        - { name: orders count, database: orders, sql: "SELECT count(*) FROM orders", equals: "200000" }
+        - { name: total, database: orders, sql: "SELECT total();", min: 1 }
 YAML
 
 step "seed"
@@ -80,6 +87,33 @@ step "restore one database with clean=true"
 psql -q -d orders_restored -c "DELETE FROM orders WHERE id <= 10"
 cistern restore --job orders-db --set databases=orders --set restore_suffix=_restored --set clean=true --yes
 [ "$(sum orders_restored orders)" = "$ORDERS" ] || fail "clean restore mismatch"
+
+step "restore drill: restore, count tables and rows, run SQL checks, drop"
+cistern drill --job orders-db
+cistern drill --job orders-db --json > drill.json
+[ "$(grep -c '"status": "passed"' drill.json)" = 9 ] || { cat drill.json; fail "expected 9 passed drill checks"; }
+grep -A1 '"name": "public.orders"' drill.json | grep -q '"rows": 200000' || { cat drill.json; fail "orders row count"; }
+grep -q '"total_rows": 205000' drill.json || fail "total_rows"
+grep -q '"cleaned_up": true' drill.json || fail "drill not cleaned up"
+[ "$(psql -At -c "SELECT count(*) FROM pg_database WHERE datname IN ('orders_drill', 'users_drill')")" = 0 ] || fail "drill databases left behind"
+grep -q 'cistern_drill_last_success_timestamp_seconds{cistern_job="orders-db"}' /e2e/metrics/cistern_orders-db.prom || fail "drill metric missing"
+cistern drills --job orders-db
+
+step "restore drill: a failing SQL check fails the drill and still cleans up"
+sed 's/equals: "200000"/equals: "1"/' cistern.yaml > cistern-fail.yaml
+if cistern drill -c cistern-fail.yaml --job orders-db > fail.txt 2>&1; then cat fail.txt; fail "drill with a wrong check passed"; fi
+grep -q 'check "orders count" failed' fail.txt || { cat fail.txt; fail "unexpected drill failure"; }
+[ "$(psql -At -c "SELECT count(*) FROM pg_database WHERE datname IN ('orders_drill', 'users_drill')")" = 0 ] || fail "failed drill left databases behind"
+grep -q 'cistern_drill_last_failure_timestamp_seconds{cistern_job="orders-db"}' /e2e/metrics/cistern_orders-db.prom || fail "drill failure metric missing"
+
+step "restore drill: never drops a same-named database without the marker"
+psql -q -c "CREATE DATABASE orders_drill"
+psql -q -d orders_drill -c "CREATE TABLE precious (id int)"
+if cistern drill --job orders-db 2>err.txt; then fail "drill replaced an unmarked database"; fi
+grep -q "left untouched" err.txt || { cat err.txt; fail "unexpected error"; }
+[ "$(psql -At -d orders_drill -c "SELECT count(*) FROM pg_tables WHERE tablename = 'precious'")" = 1 ] || fail "unmarked database was touched"
+psql -q -c "DROP DATABASE orders_drill"
+echo "unmarked orders_drill left alone"
 
 if [ -z "${SKIP_DR:-}" ]; then
   step "manual DR without cistern: age -d | gunzip | pg_restore"

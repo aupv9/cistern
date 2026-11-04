@@ -124,8 +124,8 @@ func TestInternalAPI(t *testing.T) {
 	if _, err := c.StartRun(context.Background(), &RunRequest{Op: "restore", Job: "db", Target: "bad"}); !errors.As(err, &ae) || ae.Status != http.StatusUnprocessableEntity || ae.Fields["target"] != "bad" {
 		t.Fatalf("invalid: %v", err)
 	}
-	if _, err := c.StartRun(context.Background(), &RunRequest{Op: "prune", Job: "db"}); !errors.As(err, &ae) || ae.Status != http.StatusUnprocessableEntity {
-		t.Fatalf("prune must be rejected: %v", err)
+	if _, err := c.StartRun(context.Background(), &RunRequest{Op: "compact", Job: "db"}); !errors.As(err, &ae) || ae.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown op must be rejected: %v", err)
 	}
 	st, err := c.Status(context.Background())
 	if err != nil || !st.API || len(st.Running) != 1 || st.Running[0].Job != "slow" || st.Running[0].RunID != sid || st.Timezone != "UTC" {

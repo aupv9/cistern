@@ -208,11 +208,17 @@ type deploymentDaemon struct {
 	Version    string `json:"version,omitempty"`
 }
 
+type deploymentFeatures struct {
+	Prune  bool `json:"prune"`
+	Drills bool `json:"drills"`
+}
+
 type deployment struct {
-	Name     string           `json:"name"`
-	Version  string           `json:"version"`
-	Timezone string           `json:"timezone"`
-	Daemon   deploymentDaemon `json:"daemon"`
+	Name     string             `json:"name"`
+	Version  string             `json:"version"`
+	Timezone string             `json:"timezone"`
+	Daemon   deploymentDaemon   `json:"daemon"`
+	Features deploymentFeatures `json:"features"`
 }
 
 type meResponse struct {
@@ -228,6 +234,10 @@ func (s *Server) deployment(ctx context.Context) deployment {
 	d := deployment{Name: s.scfg.Name, Version: s.version, Timezone: s.timezone(dv), Daemon: deploymentDaemon{Configured: dv.configured, Reachable: dv.reachable}}
 	if dv.status != nil {
 		d.Daemon.Version = dv.status.Version
+	}
+	d.Features.Prune = s.scfg.Prune.Enabled
+	for _, j := range s.cfg.Jobs {
+		d.Features.Drills = d.Features.Drills || j.Drill != nil
 	}
 	return d
 }

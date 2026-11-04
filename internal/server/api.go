@@ -120,6 +120,7 @@ var (
 	permOperate = perm{config.RoleOperator, func(r []string) bool { return hasRole(r, config.RoleOperator) }}
 	permRestore = perm{config.RoleRestorer, func(r []string) bool { return hasRole(r, config.RoleRestorer) }}
 	permDecide  = perm{config.RoleApprover, canDecide}
+	permAdmin   = perm{config.RoleAdmin, func(r []string) bool { return hasRole(r, config.RoleAdmin) }}
 )
 
 type request struct {
@@ -280,6 +281,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/jobs/{job}/verify", s.api(permOperate, s.startVerify))
 	mux.HandleFunc("POST /api/v1/jobs/{job}/restore/preview", s.api(permRestore, s.restorePreview))
 	mux.HandleFunc("POST /api/v1/jobs/{job}/restore", s.api(permRestore, s.startRestore))
+	mux.HandleFunc("POST /api/v1/jobs/{job}/drill", s.api(permRestore, s.startDrill))
+	mux.HandleFunc("GET /api/v1/jobs/{job}/drills", s.api(permView, s.listDrills))
+	mux.HandleFunc("POST /api/v1/jobs/{job}/prune/preview", s.api(permOperate, s.prunePreview))
+	mux.HandleFunc("POST /api/v1/jobs/{job}/prune", s.api(permAdmin, s.startPrune))
+	mux.HandleFunc("GET /api/v1/config", s.api(permOperate, s.configView))
 	mux.HandleFunc("GET /api/v1/runs", s.api(permView, s.activeRuns))
 	mux.HandleFunc("GET /api/v1/runs/{run}", s.api(permView, s.getRun))
 	mux.HandleFunc("GET /api/v1/approvals", s.api(permView, s.listApprovals))

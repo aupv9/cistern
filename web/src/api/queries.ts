@@ -23,6 +23,15 @@ export type RestoreTarget = Schemas['RestoreTarget']
 export type RestoreInput = Schemas['RestoreInput']
 export type RestorePreview = Schemas['RestorePreview']
 export type Actor = Schemas['Actor']
+export type DrillConfig = Schemas['DrillConfig']
+export type DrillCheck = Schemas['DrillCheck']
+export type DrillTable = Schemas['DrillTable']
+export type DrillResult = Schemas['DrillResult']
+export type PruneItem = Schemas['PruneItem']
+export type PrunePreview = Schemas['PrunePreview']
+export type PruneSummary = Schemas['PruneSummary']
+export type ConfigView = Schemas['ConfigView']
+export type PruneRequest = { reason: string; confirm_job: string }
 
 export type RestoreRequest = RestoreInput & { reason: string; confirm_job: string }
 export type RestoreResult = { needs_approval: boolean; run_id?: string; approval_id?: string }
@@ -45,6 +54,8 @@ export const keys = {
   approval: (id: string) => ['approval', id] as const,
   audit: (filters: AuditFilters) => ['audit', filters] as const,
   preview: (job: string, input: RestoreInput) => ['job', job, 'preview', input] as const,
+  drills: (job: string, limit: number) => ['job', job, 'drills', limit] as const,
+  config: ['config'] as const,
 }
 
 export const meQuery = queryOptions({
@@ -170,6 +181,37 @@ export const previewQuery = (job: string, input: RestoreInput, enabled: boolean)
     retry: false,
     placeholderData: (prev) => prev,
   })
+
+export const drillsQuery = (job: string, limit = 20) =>
+  queryOptions({
+    queryKey: keys.drills(job, limit),
+    queryFn: async () =>
+      (await unwrap(api.GET('/jobs/{job}/drills', { params: { path: { job }, query: { limit } } }))).drills,
+    refetchInterval: 60_000,
+  })
+
+export const HISTORY_LIMIT = 200
+
+export const historyQuery = (job: string) => ({ ...jobRunsQuery(job, 'backup', HISTORY_LIMIT), refetchInterval: 120_000 })
+
+export const configQuery = queryOptions({
+  queryKey: keys.config,
+  queryFn: () => unwrap(api.GET('/config')),
+  staleTime: 60_000,
+  refetchOnWindowFocus: false,
+})
+
+export function runDrill(job: string, snapshot = 'latest') {
+  return unwrap(api.POST('/jobs/{job}/drill', { params: { path: { job } }, body: { snapshot } }))
+}
+
+export function previewPrune(job: string) {
+  return unwrap(api.POST('/jobs/{job}/prune/preview', { params: { path: { job } } }))
+}
+
+export function startPrune(job: string, body: PruneRequest) {
+  return unwrap(api.POST('/jobs/{job}/prune', { params: { path: { job } }, body }))
+}
 
 export function runBackup(job: string) {
   return unwrap(api.POST('/jobs/{job}/backup', { params: { path: { job } } }))

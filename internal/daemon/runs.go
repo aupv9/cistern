@@ -32,6 +32,8 @@ type RunRequest struct {
 type Result struct {
 	Snapshot    string
 	StoredBytes int64
+	Drill       *admin.DrillReport
+	Prune       *admin.PruneSummary
 }
 
 type Executor func(ctx context.Context, req *RunRequest) (Result, error)
@@ -131,7 +133,7 @@ func (g *registry) begin(req *RunRequest) (*runEntry, error) {
 		RequestedBy: req.RequestedBy, ApprovalID: req.ApprovalID, Snapshot: req.Snapshot, Target: req.Target,
 		QueuedAt: &now,
 	}
-	if e.run.Snapshot == "" && (req.Op == admin.OpVerify || req.Op == admin.OpRestore) {
+	if e.run.Snapshot == "" && (req.Op == admin.OpVerify || req.Op == admin.OpRestore || req.Op == admin.OpDrill) {
 		e.run.Snapshot = "latest"
 	}
 	g.runs[req.RunID] = e
@@ -191,6 +193,13 @@ func (g *registry) execute(ctx context.Context, e *runEntry, req *RunRequest) er
 		e.run.State, e.run.Error = admin.StateFailed, err.Error()
 	} else {
 		e.run.State = admin.StateSucceeded
+	}
+	if req.Op == admin.OpDrill {
+		e.run.Drill = admin.DrillResultOf(e.run, res.Drill)
+	}
+	if res.Prune != nil {
+		p := *res.Prune
+		e.run.Prune = &p
 	}
 	e.mu.Unlock()
 

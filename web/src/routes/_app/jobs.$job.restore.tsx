@@ -15,6 +15,7 @@ import {
   type RestoreTarget,
   type SnapshotSummary,
 } from '~/api/queries'
+import { ConfirmJobName, ReasonField } from '~/components/ConfirmFields'
 import { CopyButton } from '~/components/CopyButton'
 import { CheckCircleIcon, StepCurrentIcon, StepTodoIcon, WarningIcon } from '~/components/Icons'
 import { BlockSkeleton, PageSkeleton } from '~/components/Skeleton'
@@ -25,7 +26,7 @@ import { useMe } from '~/hooks/useMe'
 import { useNow } from '~/hooks/useNow'
 import { formatBytes, formatWhen, formatWhenLower } from '~/lib/format'
 import { blockReason, can } from '~/lib/roles'
-import { canSubmitRestore, confirmState, reasonError, REASON_MAX, suffixError } from '~/lib/restore'
+import { canSubmitRestore, reasonError, suffixError } from '~/lib/restore'
 import { APPROVAL_STATE } from '~/lib/status'
 
 type RestoreSearch = { snapshot?: string }
@@ -106,7 +107,7 @@ function RestoreForm({ job, snapshots, me }: { job: JobDetail; snapshots: Snapsh
   const queryClient = useQueryClient()
   const now = useNow(30_000)
   const tz = me.deployment.timezone
-  const ids = { snap: useId(), suffix: useId(), suffixHint: useId(), reason: useId(), reasonHint: useId(), confirm: useId(), confirmHint: useId(), submitHint: useId() }
+  const ids = { snap: useId(), suffix: useId(), suffixHint: useId(), submitHint: useId() }
 
   const initialSnap = search.snapshot && snapshots.some((s) => s.id === search.snapshot) ? search.snapshot : 'latest'
   const [snapshotRef, setSnapshotRef] = useState(initialSnap)
@@ -151,7 +152,6 @@ function RestoreForm({ job, snapshots, me }: { job: JobDetail; snapshots: Snapsh
   })
 
   const serverFields = submit.error instanceof ApiError ? submit.error.fields : preview.error instanceof ApiError ? preview.error.fields : {}
-  const confirm = confirmState(typed, job.name)
   const ready = canSubmitRestore({
     job: job.name,
     typed,
@@ -389,50 +389,21 @@ function RestoreForm({ job, snapshots, me }: { job: JobDetail; snapshots: Snapsh
                 <span>{blocked} Restores cannot start right now.</span>
               </div>
             ) : null}
-            <div className="field">
-              <label htmlFor={ids.reason}>Reason</label>
-              <textarea
-                id={ids.reason}
-                className="textarea"
-                rows={3}
-                maxLength={REASON_MAX}
-                value={reason}
-                aria-invalid={!!reasonErr || !!serverFields.reason}
-                aria-describedby={ids.reasonHint}
-                placeholder="For example INC-4821: rows deleted by a faulty migration"
-                onChange={(e) => setReason(e.target.value)}
-                onBlur={() => setTouched((t) => ({ ...t, reason: true }))}
-              />
-              <span id={ids.reasonHint} className={reasonErr || serverFields.reason ? 'field-err' : 'hint'}>
-                {reasonErr ?? serverFields.reason ?? 'Required. It is shown to the approver and kept in the audit log.'}
-              </span>
-            </div>
-            <div className="field">
-              <label htmlFor={ids.confirm}>
-                Type <span className="chip">{job.name}</span> to confirm
-              </label>
-              <input
-                id={ids.confirm}
-                type="text"
-                className={`input mono${confirm === 'match' ? ' is-valid' : ''}`}
-                style={{ minHeight: 40 }}
-                autoComplete="off"
-                spellCheck={false}
-                autoCapitalize="off"
-                value={typed}
-                aria-invalid={confirm === 'mismatch' || !!serverFields.confirm_job}
-                aria-describedby={ids.confirmHint}
-                onChange={(e) => setTyped(e.target.value)}
-              />
-              <span id={ids.confirmHint} className={confirm === 'mismatch' ? 'field-err' : 'hint'}>
-                {serverFields.confirm_job ??
-                  (confirm === 'match'
-                    ? 'Name matches.'
-                    : confirm === 'mismatch'
-                      ? `That is not the job name. Type ${job.name} exactly.`
-                      : 'Typing the name guards against restoring the wrong job.')}
-              </span>
-            </div>
+            <ReasonField
+              value={reason}
+              onChange={setReason}
+              onBlur={() => setTouched((t) => ({ ...t, reason: true }))}
+              error={reasonErr ?? serverFields.reason}
+              placeholder="For example INC-4821: rows deleted by a faulty migration"
+              hint="Required. It is shown to the approver and kept in the audit log."
+            />
+            <ConfirmJobName
+              job={job.name}
+              value={typed}
+              onChange={setTyped}
+              serverError={serverFields.confirm_job}
+              idleHint="Typing the name guards against restoring the wrong job."
+            />
             {submit.isError && !(submit.error instanceof ApiError && Object.keys(submit.error.fields).length) ? <InlineError error={submit.error} /> : null}
             <button type="submit" className="btn btn-p" style={{ minHeight: 44 }} disabled={!ready} aria-describedby={ids.submitHint}>
               {submit.isPending ? 'Sending…' : production ? 'Request approval' : 'Start restore'}

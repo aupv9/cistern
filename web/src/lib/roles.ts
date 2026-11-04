@@ -1,13 +1,19 @@
 import type { Me, Role } from '~/api/queries'
 
-export type Capability = 'backup' | 'verify' | 'restore' | 'approve'
+export type Capability = 'backup' | 'verify' | 'restore' | 'approve' | 'drill' | 'prune_preview' | 'prune' | 'config'
 
 const NEEDS: Record<Capability, Role> = {
   backup: 'operator',
   verify: 'operator',
   restore: 'restorer',
   approve: 'approver',
+  drill: 'restorer',
+  prune_preview: 'operator',
+  prune: 'admin',
+  config: 'operator',
 }
+
+const NEEDS_DAEMON: ReadonlySet<Capability> = new Set<Capability>(['backup', 'verify', 'restore', 'drill', 'prune'])
 
 const ROLE_LABEL: Record<Role, string> = {
   viewer: 'Viewer',
@@ -61,8 +67,21 @@ export function blockReason(me: Me, capability: Capability): string | null {
   if (!can(me.roles, capability)) {
     return `Needs the ${ROLE_LABEL[NEEDS[capability]]} role.`
   }
-  if (capability !== 'approve' && readOnlyReason(me.deployment)) {
+  if (NEEDS_DAEMON.has(capability) && readOnlyReason(me.deployment)) {
     return me.deployment.daemon.configured ? 'The daemon is not reachable.' : 'No daemon is configured.'
   }
   return null
+}
+
+export const PRUNE_OFF_REASON =
+  'Prune is not enabled for the UI on this server. It runs from the CLI or the prune CronJob, so the server does not need delete permission on the repository. An admin can turn it on with server.prune.enabled.'
+
+export function pruneRunBlock(me: Me): string | null {
+  if (!can(me.roles, 'prune')) return 'Running a prune needs the Admin role.'
+  if (!me.deployment.features.prune) return PRUNE_OFF_REASON
+  return blockReason(me, 'prune')
+}
+
+export function canRunPrune(me: Me): boolean {
+  return can(me.roles, 'prune') && me.deployment.features.prune
 }

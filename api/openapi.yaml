@@ -27,6 +27,9 @@ tags:
   - name: restore
   - name: approvals
   - name: audit
+  - name: drills
+  - name: prune
+  - name: config
 paths:
   /auth/login:
     get:
@@ -255,6 +258,91 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{job}/drill:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [drills]
+      summary: Run a restore drill now (restorer); needs a drill section in the job's configuration
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { snapshot: { type: string, default: latest } } }
+      responses:
+        "202":
+          description: Accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/RunRef" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{job}/drills:
+    parameters:
+      - { $ref: "#/components/parameters/Job" }
+      - { name: limit, in: query, required: false, schema: { type: integer, default: 20, maximum: 100 } }
+    get:
+      tags: [drills]
+      summary: Restore drill results, newest first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, required: [drills], properties: { drills: { type: array, items: { $ref: "#/components/schemas/DrillResult" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{job}/prune/preview:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [prune]
+      summary: What a prune would keep and remove, computed without deleting anything (operator)
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/PrunePreview" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{job}/prune:
+    parameters: [{ $ref: "#/components/parameters/Job" }]
+    post:
+      tags: [prune]
+      summary: Run a prune (admin); 403 when deployment.features.prune is false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, confirm_job]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+                confirm_job: { type: string, description: "Must equal the job name" }
+      responses:
+        "202":
+          description: Accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/RunRef" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /config:
+    get:
+      tags: [config]
+      summary: The server's configuration file, read-only, with secrets redacted (operator); every read is audited as config.view
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigView" } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /runs:
     get:
       tags: [runs]
@@ -443,7 +531,7 @@ components:
         deployment: { $ref: "#/components/schemas/Deployment" }
     Deployment:
       type: object
-      required: [name, version, timezone, daemon]
+      required: [name, version, timezone, daemon, features]
       properties:
         name: { type: string, description: "server.name, e.g. production" }
         version: { type: string }
@@ -455,19 +543,26 @@ components:
             configured: { type: boolean, description: "False means the UI is read-only" }
             reachable: { type: boolean }
             version: { type: string }
+        features:
+          type: object
+          required: [prune, drills]
+          properties:
+            prune: { type: boolean, description: "server.prune.enabled: admins may run prune from the UI (the daemon then needs delete permissions)" }
+            drills: { type: boolean, description: "At least one job has a drill section" }
     Op:
       type: string
-      enum: [backup, verify, restore, prune]
+      enum: [backup, verify, restore, prune, drill]
     RunState:
       type: string
       enum: [queued, running, succeeded, failed, unknown]
       description: "unknown: the daemon restarted or lost the run"
     JobHealth:
       type: string
-      enum: [healthy, failing, running, stale, verify_overdue, never_run]
+      enum: [healthy, failing, running, stale, drill_failing, verify_overdue, never_run]
       description: |
-        Precedence: running > failing > stale > verify_overdue > healthy.
+        Precedence: running > failing > stale > drill_failing > verify_overdue > healthy.
         failing: last backup failure newer than last success. stale: no success for 36 h.
+        drill_failing: job has a drill and its newest drill failed, or no drill passed within drill.max_age_days.
         verify_overdue: job has verify_schedule and no successful verify for 8 days.
     RunPoint:
       type: object
@@ -481,7 +576,7 @@ components:
       type: object
       required: [kind, message, since]
       properties:
-        kind: { type: string, enum: [backup_failing, backup_stale, verify_failing, verify_stale, daemon_unreachable] }
+        kind: { type: string, enum: [backup_failing, backup_stale, verify_failing, verify_stale, drill_failing, drill_stale, daemon_unreachable] }
         job: { type: string, description: "Absent for daemon_unreachable" }
         message: { type: string }
         since: { type: string, format: date-time }
@@ -495,12 +590,19 @@ components:
         repository: { type: string }
         schedule: { type: string }
         verify_schedule: { type: string }
+        drill_schedule: { type: string }
         health: { $ref: "#/components/schemas/JobHealth" }
         running_op: { $ref: "#/components/schemas/Op" }
         last_success: { type: string, format: date-time }
         last_failure: { type: string, format: date-time }
         last_failure_error: { type: string }
         last_verify: { type: string, format: date-time }
+        last_drill:
+          type: object
+          required: [state, at]
+          properties:
+            state: { $ref: "#/components/schemas/RunState" }
+            at: { type: string, format: date-time }
         next_run: { type: string, format: date-time }
         snapshots: { type: integer }
         stored_bytes: { type: integer, description: "Sum of stored sizes of all completed snapshots" }
@@ -568,6 +670,8 @@ components:
               additionalProperties: { type: string }
             restore_targets: { type: array, items: { $ref: "#/components/schemas/RestoreTarget" } }
             current_run: { $ref: "#/components/schemas/Run" }
+            drill: { $ref: "#/components/schemas/DrillConfig" }
+            last_drill_result: { $ref: "#/components/schemas/DrillResult" }
     SnapshotSummary:
       type: object
       required: [id, started_at, finished_at, duration_ms, stored_bytes, plain_bytes, artifacts, kept_by]
@@ -661,6 +765,8 @@ components:
         stored_bytes: { type: integer }
         error: { type: string }
         progress: { $ref: "#/components/schemas/Progress" }
+        drill: { $ref: "#/components/schemas/DrillResult", description: "Present when op is drill and the run has finished" }
+        prune: { $ref: "#/components/schemas/PruneSummary", description: "Present when op is prune and the run has finished" }
         log_tail: { type: array, maxItems: 200, items: { type: string }, description: "Last log lines of the run, newest last" }
     RunRef:
       type: object
@@ -719,6 +825,7 @@ components:
         - auth.logout
         - backup.run
         - verify.run
+        - drill.run
         - prune.run
         - restore.run
         - restore.request
@@ -727,6 +834,7 @@ components:
         - approval.expire
         - run.finish
         - access.denied
+        - config.view
     AuditResult:
       type: string
       enum: [accepted, succeeded, failed, denied, pending]
@@ -750,3 +858,97 @@ components:
         error: { type: string }
         source_ip: { type: string }
         summary: { type: string, description: "One human-readable sentence" }
+    DrillConfig:
+      type: object
+      required: [target, restore_suffix, max_age_days, keep]
+      properties:
+        schedule: { type: string, description: "Cron expression; absent means drills run only on demand" }
+        target: { type: string, description: "A non-production restore target of the job" }
+        restore_suffix: { type: string, description: "Suffix of the drill databases, default _drill" }
+        max_age_days: { type: integer, description: "drill_stale after this many days without a passed drill, default 35" }
+        keep: { type: boolean, description: "Keep the drill databases after the checks instead of dropping them" }
+        checks: { type: integer, description: "Number of configured SQL checks" }
+    DrillCheck:
+      type: object
+      required: [name, kind, status]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [restore, tables, rows, sql, objects, cleanup] }
+        status: { type: string, enum: [passed, failed, skipped] }
+        expected: { type: string }
+        actual: { type: string }
+        message: { type: string }
+    DrillTable:
+      type: object
+      required: [database, name, rows]
+      properties:
+        database: { type: string }
+        name: { type: string }
+        rows: { type: integer }
+    DrillResult:
+      type: object
+      required: [run_id, job, snapshot, target, state, started_at, checks]
+      properties:
+        run_id: { type: string }
+        job: { type: string }
+        snapshot: { type: string }
+        target: { type: string }
+        state: { $ref: "#/components/schemas/RunState" }
+        trigger: { type: string, enum: [schedule, cli, ui] }
+        requested_by: { $ref: "#/components/schemas/Actor" }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        restored_bytes: { type: integer }
+        checks: { type: array, items: { $ref: "#/components/schemas/DrillCheck" } }
+        tables: { type: array, maxItems: 500, items: { $ref: "#/components/schemas/DrillTable" }, description: "Row counts of the restored tables, largest first" }
+        total_tables: { type: integer, description: "Number of restored tables counted, not capped like tables" }
+        total_rows: { type: integer, description: "Sum of the row counts of all restored tables, not capped like tables" }
+        cleaned_up: { type: boolean }
+        error: { type: string }
+    PruneItem:
+      type: object
+      required: [snapshot, action, reasons]
+      properties:
+        snapshot: { type: string }
+        finished_at: { type: string, format: date-time }
+        action: { type: string, enum: [keep, remove, remove-incomplete] }
+        reasons: { type: array, items: { type: string }, description: "Retention rules that keep it (last, daily, …, depends_on, no retention policy). Empty for action remove: no rule keeps it. For remove-incomplete it says why (incomplete, older than 1h)" }
+        stored_bytes: { type: integer }
+        lock_until: { type: string, format: date-time, description: "Object Lock retain-until; a remove before this date will fail" }
+    PrunePreview:
+      type: object
+      required: [job, items, kept, removed, freed_bytes, locked, run_records_removed]
+      properties:
+        job: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/PruneItem" } }
+        kept: { type: integer }
+        removed: { type: integer }
+        freed_bytes: { type: integer, description: "Stored bytes of the snapshots to remove, including those still under Object Lock (their space is freed only when the lock expires)" }
+        locked: { type: integer, description: "Snapshots to remove that are still under Object Lock" }
+        run_records_removed: { type: integer }
+    PruneSummary:
+      type: object
+      required: [kept, removed, errors, run_records_removed]
+      properties:
+        kept: { type: integer }
+        removed: { type: integer }
+        errors: { type: integer }
+        freed_bytes: { type: integer }
+        run_records_removed: { type: integer }
+    ConfigView:
+      type: object
+      required: [path, yaml, loaded_at, literal_secrets]
+      properties:
+        path: { type: string }
+        loaded_at: { type: string, format: date-time }
+        yaml: { type: string, description: "The file as written, ${VAR} references kept, every literal secret value replaced by <redacted>" }
+        literal_secrets:
+          type: array
+          description: "Places where a secret is written into the file instead of referenced from the environment"
+          items:
+            type: object
+            required: [path, line]
+            properties:
+              path: { type: string, description: "e.g. jobs[orders-db].params.password" }
+              line: { type: integer }

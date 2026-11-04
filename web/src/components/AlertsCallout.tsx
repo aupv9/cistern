@@ -29,6 +29,13 @@ export function alertHeadline(alert: Alert, job: JobSummary | undefined, tz: str
       return `${alert.job} failed its last verify.`
     case 'verify_stale':
       return job && !job.last_verify ? `${alert.job} has never been verified.` : `${alert.job} has not been verified since ${formatDay(alert.since, tz, now)}.`
+    case 'drill_failing':
+      return `${alert.job} failed its last restore drill.`
+    case 'drill_stale': {
+      const last = job?.last_drill
+      if (!last) return `${alert.job} has never passed a restore drill.`
+      return `${alert.job} has not passed a restore drill since ${formatDay(alert.since, tz, now)}.`
+    }
     case 'daemon_unreachable':
       return 'The Cistern daemon is not reachable.'
   }
@@ -47,7 +54,7 @@ function sentence(s: string) {
 }
 
 function isError(a: Alert) {
-  return a.kind !== 'verify_stale'
+  return a.kind !== 'verify_stale' && a.kind !== 'drill_stale'
 }
 
 function Group({ alerts, jobs, tz, now, tone }: { alerts: Alert[]; jobs: readonly JobSummary[]; tz: string; now: Date; tone: 'err' | 'wrn' }) {

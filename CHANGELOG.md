@@ -6,6 +6,40 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **Restore drills** (`jobs[].drill`) for PostgreSQL, MySQL/MariaDB and the S3 driver: restore a
+  snapshot into a non-production target under a drill suffix, check the number of tables against
+  the dump, count rows exactly, run read-only SQL checks (object count and bytes for S3), then drop
+  the copy. A drill only replaces or drops copies that carry its own marker. See
+  [docs/drills.md](docs/drills.md).
+- `cistern drill` and `cistern drills`; `drill.schedule` in the daemon; metrics
+  `cistern_drill_last_success_timestamp_seconds` and `cistern_drill_last_failure_timestamp_seconds`;
+  alerts `CisternDrillFailing` and `CisternDrillStale`.
+- Admin UI: restore drill card with the latest evidence, checks and largest tables, "Run drill now"
+  for restorers, drill history, a "Last drill" column, health `drill_failing` and alerts
+  `drill_failing` / `drill_stale`.
+- Admin UI: prune preview for operators (what is kept or removed and why, freed size, Object Lock),
+  and prune for admins behind `server.prune.enabled` (off by default).
+- Admin UI: backup duration and stored size history charts, keyboard accessible, with a table view.
+- Admin UI: read-only configuration view for operators, with secrets redacted, a list of secrets
+  written literally into the file, and every view audited as `config.view`.
+
+### Changed
+
+- Prune reports and run records include stored and freed bytes; prune run records carry a summary.
+- The daemon's internal API accepts the `drill` and `prune` operations.
+- `/me` reports `deployment.features` (`prune`, `drills`).
+- Job health has a `drill_failing` state between `stale` and `verify_overdue`.
+- Alert annotations in `deploy/k8s/monitoring` are in English.
+
+### Security
+
+- Drills never drop a database or prefix without their marker, refuse S3 drill prefixes that overlap
+  the source, ignore `clean`, `restore_globals` and `overwrite`, and run SQL checks in read-only
+  transactions.
+- The configuration view never returns an expanded value and is covered by the secret-leak test.
+
 ## [0.4] - 2026-11-04
 
 Hardens the Admin UI for a pilot: persistent sign-out, rate limits, a separate port for the daemon's

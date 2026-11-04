@@ -28,9 +28,10 @@ Backups are only worth what their restores are worth, so Cistern is built around
 - **Client-side encryption** with age (X25519), interoperable with the `age` CLI
 - **Streaming pipeline**: dump → SHA-256 → gzip → age → SHA-256 → upload, memory bounded to one upload part
 - **Verify and restore**: full verification with the private key, stored-checksum verification without it
+- **Restore drills**: scheduled restores into a scratch target with table, row-count and SQL checks, dropped afterwards and recorded as evidence that backups really restore
 - **GFS retention** (`last`, `hourly`, `daily`, `weekly`, `monthly`, `yearly`) that never drops a snapshot another one depends on
 - **Scheduler daemon** with cron expressions, plus one-shot mode for Kubernetes CronJobs and systemd timers
-- **Admin UI** (`cistern server`): overview, snapshots, run history, backups and restores from the browser with OIDC sign-in, roles, approvals for production restores, an append-only audit log, rate limits and server-side sign-out — the UI process never holds the private key
+- **Admin UI** (`cistern server`): overview, snapshots, run history, backups, restores, restore drills, prune previews and a redacted configuration view from the browser with OIDC sign-in, roles, approvals for production restores, an append-only audit log, rate limits and server-side sign-out — the UI process never holds the private key
 - **Observability**: Prometheus metrics (scrape, Pushgateway or node_exporter textfile), ready-made alert rules, Slack/Teams/Telegram/JSON webhooks
 - **No dependencies beyond the Go standard library** (a vendored subset of `golang.org/x/crypto` for ChaCha20-Poly1305)
 
@@ -139,6 +140,7 @@ recipients used and the snapshots it depends on. See [Architecture](docs/archite
 | [Observability](docs/observability.md) | Metrics, alerts, webhooks, `/status` |
 | [Deployment](docs/deployment.md) | Daemon vs one-shot, Docker, Kubernetes, systemd |
 | [Admin UI](docs/admin-ui.md) | `cistern server`: architecture, roles, approvals, audit log, security, development |
+| [Restore drills](docs/drills.md) | Automatic restores that prove backups can be restored |
 | [Disaster recovery](docs/disaster-recovery.md) | Restoring without Cistern |
 | [Architecture](docs/architecture.md) | Snapshot format, retention, incremental backups, writing a driver |
 

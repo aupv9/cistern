@@ -334,7 +334,7 @@ func (m *MySQL) dumpDB(ctx context.Context, t tools, opt string, v versionInfo, 
 	return w.Close()
 }
 
-func (m *MySQL) Restore(ctx context.Context, src driver.Source) error {
+func (m *MySQL) selectDatabases(src driver.Source) ([]string, error) {
 	inSnapshot := map[string]bool{}
 	var dbs []string
 	for _, name := range src.List() {
@@ -352,9 +352,17 @@ func (m *MySQL) Restore(ctx context.Context, src driver.Source) error {
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("databases not in snapshot: %s", strings.Join(missing, ", "))
+			return nil, fmt.Errorf("databases not in snapshot: %s", strings.Join(missing, ", "))
 		}
 		dbs = m.databases
+	}
+	return dbs, nil
+}
+
+func (m *MySQL) Restore(ctx context.Context, src driver.Source) error {
+	dbs, err := m.selectDatabases(src)
+	if err != nil {
+		return err
 	}
 	if len(dbs) == 0 {
 		return errors.New("nothing to restore: snapshot has no database artifacts")

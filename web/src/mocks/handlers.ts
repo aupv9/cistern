@@ -3,7 +3,10 @@ import type { AuditEntry, RestoreInput, Role, SnapshotSummary } from '~/api/quer
 import {
   alertsFor,
   buildManifest,
+  configView,
   createMockDb,
+  drillResults,
+  prunePreview,
   nextApprovalId,
   refreshDerived,
   startSimulatedRun,
@@ -190,12 +193,14 @@ export const handlers = [
       repository: j.repository,
       schedule: j.schedule,
       verify_schedule: j.verify_schedule,
+      drill_schedule: j.drill_schedule,
       health: j.health,
       running_op: j.running_op,
       last_success: j.last_success,
       last_failure: j.last_failure,
       last_failure_error: j.last_failure_error,
       last_verify: j.last_verify,
+      last_drill: j.last_drill,
       next_run: j.next_run,
       snapshots: j.snapshots,
       stored_bytes: j.stored_bytes,
@@ -345,6 +350,75 @@ export const handlers = [
     addAudit({ action: 'restore.run', result: 'accepted', job, snapshot: p.snapshot.id, target: p.target.name, run_id: run.id, reason, params: p.overrides, summary: `${db.me.user.name} started a restore of ${job} into ${p.target.name}` })
     refreshDerived(db)
     return HttpResponse.json({ needs_approval: false, run_id: run.id }, { status: 202 })
+  }),
+
+  http.post(`${API}/jobs/:job/drill`, async ({ request, params }) => {
+    await wait()
+    const g = guard(request, 'restorer')
+    if (g) return g
+    const down = daemonDown()
+    if (down) return down
+    const job = db.jobs.find((j) => j.name === params.job)
+    if (!job) return fail(404, 'not_found', `There is no job named ${String(params.job)}.`)
+    if (!job.drill) return fail(422, 'invalid', `${job.name} has no drill section in the server configuration.`)
+    if (job.current_run) return fail(409, 'conflict', `${job.name} already has a ${job.current_run.op} ${job.current_run.state}. Wait for it to finish.`)
+    const body = (await request.json().catch(() => ({}))) as { snapshot?: string }
+    const snap = resolveSnapshot(job.name, body.snapshot ?? 'latest')
+    if (!snap) return fail(422, 'invalid', 'No snapshot matches.', { snapshot: 'No snapshot matches.' })
+    const run = startSimulatedRun(db, { job: job.name, op: 'drill', snapshot: snap.id, target: job.drill.target }, job.name === 'billing-db' ? 'failed' : 'succeeded', 9_000)
+    addAudit({ action: 'drill.run', result: 'accepted', job: job.name, snapshot: snap.id, target: job.drill.target, run_id: run.id, summary: `${db.me.user.name} started a restore drill of ${job.name}` })
+    refreshDerived(db)
+    return HttpResponse.json({ run_id: run.id }, { status: 202 })
+  }),
+
+  http.get(`${API}/jobs/:job/drills`, async ({ request, params }) => {
+    await wait()
+    const g = guard(request)
+    if (g) return g
+    const job = String(params.job)
+    if (!db.jobs.some((j) => j.name === job)) return fail(404, 'not_found', `There is no job named ${job}.`)
+    const limit = Math.min(100, Number(new URL(request.url).searchParams.get('limit') ?? 20) || 20)
+    return HttpResponse.json({ drills: drillResults(db, job).slice(0, limit) })
+  }),
+
+  http.post(`${API}/jobs/:job/prune/preview`, async ({ request, params }) => {
+    await wait()
+    const g = guard(request, 'operator')
+    if (g) return g
+    const job = String(params.job)
+    if (!db.jobs.some((j) => j.name === job)) return fail(404, 'not_found', `There is no job named ${job}.`)
+    return HttpResponse.json(prunePreview(db, job))
+  }),
+
+  http.post(`${API}/jobs/:job/prune`, async ({ request, params }) => {
+    await wait()
+    const g = guard(request, 'admin')
+    if (g) return g
+    if (!db.me.deployment.features.prune) return fail(403, 'forbidden', 'Prune from the UI is turned off on this server. Run it from the CLI.')
+    const down = daemonDown()
+    if (down) return down
+    const job = db.jobs.find((j) => j.name === params.job)
+    if (!job) return fail(404, 'not_found', `There is no job named ${String(params.job)}.`)
+    const body = (await request.json().catch(() => ({}))) as { reason?: string; confirm_job?: string }
+    const fields: Record<string, string> = {}
+    const reason = (body.reason ?? '').trim()
+    if (reason.length < 3 || reason.length > 500) fields.reason = 'Write a reason between 3 and 500 characters.'
+    if (body.confirm_job !== job.name) fields.confirm_job = `Type ${job.name} exactly to confirm.`
+    if (Object.keys(fields).length) return fail(422, 'invalid', 'Some fields need attention.', fields)
+    if (job.current_run) return fail(409, 'conflict', `${job.name} already has a ${job.current_run.op} running. Wait for it to finish.`)
+    const run = startSimulatedRun(db, { job: job.name, op: 'prune' }, 'succeeded', 6_000)
+    addAudit({ action: 'prune.run', result: 'accepted', job: job.name, run_id: run.id, reason, summary: `${db.me.user.name} started a prune of ${job.name}` })
+    refreshDerived(db)
+    return HttpResponse.json({ run_id: run.id }, { status: 202 })
+  }),
+
+  http.get(`${API}/config`, async ({ request }) => {
+    await wait()
+    const g = guard(request, 'operator')
+    if (g) return g
+    const view = configView(db)
+    addAudit({ action: 'config.view', result: 'succeeded', summary: `${db.me.user.name} viewed the configuration ${view.path}` })
+    return HttpResponse.json(view)
   }),
 
   http.get(`${API}/runs`, async ({ request }) => {

@@ -84,11 +84,23 @@ jobs:
     restore_targets:
       - { name: scratch, description: "Same server, database shop_<suffix>, overwritten", production: false, set: { clean: "true" } }
       - { name: production, description: "The live shop database server", production: true }
+    drill:
+      schedule: "0 4 * * 0"
+      target: scratch
+      checks:
+        - { name: orders exist, sql: "SELECT count(*) FROM orders", min: 1 }
   - name: crm-db
     driver: postgres
     schedule: "0 */6 * * *"
     verify_schedule: "@weekly"
     params: { host: 127.0.0.1, user: postgres, password: "${PGPASSWORD}", databases: [crm, crm_audit] }
+    restore_targets:
+      - { name: scratch, description: "Same server, databases crm_<suffix> and crm_audit_<suffix>", production: false }
+    drill:
+      target: scratch
+      max_age_days: 14
+      checks:
+        - { name: contacts exist, database: crm, sql: "SELECT count(*) FROM contacts", min: 1 }
   - name: legacy-db
     driver: postgres
     schedule: "0 3 * * *"
@@ -145,6 +157,41 @@ if [ "$SEED" = 1 ]; then
     [ $((d % 3)) = 0 ] && record crm-db backup succeeded $((d * 86400)) 12000
   done
   record crm-db verify succeeded $((10 * 86400)) 5000
+  drill_record() {
+    local job=$1 status=$2 ago=$3 dur=$4 checks=$5 tables=$6 err=${7:-}
+    local t=$((now - ago)) id ts fin
+    ts=$(date -u -r "$t" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$t" +%Y-%m-%dT%H:%M:%SZ)
+    fin=$(date -u -r "$((t + dur / 1000))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$((t + dur / 1000))" +%Y-%m-%dT%H:%M:%SZ)
+    id=$(date -u -r "$t" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -d "@$t" +%Y%m%dT%H%M%SZ)-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    mkdir -p "$DIR/repo/_admin/runs/$job"
+    jq -n --arg id "$id" --arg job "$job" --arg st "$status" --arg ts "$ts" --arg fin "$fin" --argjson dur "$dur" \
+      --argjson checks "$checks" --argjson tables "$tables" --arg err "$err" \
+      '{id: $id, job: $job, op: "drill", status: $st, trigger: "schedule", requested_by: {id: "scheduler", name: "Scheduler"},
+        target: "scratch", started_at: $ts, finished_at: $fin, duration_ms: $dur,
+        drill: {target: "scratch", restored_bytes: 2918400, checks: $checks, tables: $tables,
+                total_tables: ($tables | length), total_rows: ([$tables[].rows] | add // 0), cleaned_up: true}}
+       + (if $err == "" then {} else {error: $err} end)' > "$DIR/repo/_admin/runs/$job/$id.json"
+  }
+  CRM_TABLES='[{"database":"crm","name":"public.contacts","rows":5000}]'
+  drill_record crm-db succeeded $((20 * 86400)) 14000 '[
+    {"name":"restore crm","kind":"restore","status":"passed","actual":"2918400 bytes","message":"pg_restore into crm_drill exited 0"},
+    {"name":"tables crm","kind":"tables","status":"passed","expected":"1","actual":"1"},
+    {"name":"rows crm","kind":"rows","status":"passed","actual":"5000 rows in 1 tables"},
+    {"name":"restore crm_audit","kind":"restore","status":"passed","actual":"1024 bytes","message":"pg_restore into crm_audit_drill exited 0"},
+    {"name":"tables crm_audit","kind":"tables","status":"passed","expected":"0","actual":"0"},
+    {"name":"rows crm_audit","kind":"rows","status":"passed","actual":"0 rows in 0 tables"},
+    {"name":"contacts exist","kind":"sql","status":"passed","expected":">= 1","actual":"5000"},
+    {"name":"cleanup","kind":"cleanup","status":"passed","message":"dropped crm_audit_drill, crm_drill"}]' "$CRM_TABLES"
+  drill_record crm-db failed $((2 * 86400)) 15000 '[
+    {"name":"restore crm","kind":"restore","status":"passed","actual":"2918400 bytes","message":"pg_restore into crm_drill exited 0"},
+    {"name":"tables crm","kind":"tables","status":"passed","expected":"1","actual":"1"},
+    {"name":"rows crm","kind":"rows","status":"passed","actual":"0 rows in 1 tables"},
+    {"name":"restore crm_audit","kind":"restore","status":"passed","actual":"1024 bytes","message":"pg_restore into crm_audit_drill exited 0"},
+    {"name":"tables crm_audit","kind":"tables","status":"passed","expected":"0","actual":"0"},
+    {"name":"rows crm_audit","kind":"rows","status":"passed","actual":"0 rows in 0 tables"},
+    {"name":"contacts exist","kind":"sql","status":"failed","expected":">= 1","actual":"0","message":"below the minimum"},
+    {"name":"cleanup","kind":"cleanup","status":"passed","message":"dropped crm_audit_drill, crm_drill"}]' \
+    '[{"database":"crm","name":"public.contacts","rows":0}]' 'drill crm-db: check "contacts exist" failed: below the minimum'
   record legacy-db backup succeeded $((3 * 86400)) 21000
 
   step "history: real backups, a failing job and a verify (trigger cli)"
@@ -153,6 +200,7 @@ if [ "$SEED" = 1 ]; then
   in_container cistern backup --job crm-db
   in_container cistern backup --job legacy-db && fail "legacy-db should fail" || true
   in_container cistern verify --job shop-db >/dev/null
+  in_container cistern drill --job shop-db >/dev/null
 fi
 
 step "start cistern daemon (in the container): metrics on 127.0.0.1:$DAEMON_PORT, API on 127.0.0.1:$DAEMON_API_PORT"

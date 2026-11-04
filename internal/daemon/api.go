@@ -79,9 +79,9 @@ func (d *daemonState) startRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Op {
-	case admin.OpBackup, admin.OpVerify, admin.OpRestore:
+	case admin.OpBackup, admin.OpVerify, admin.OpRestore, admin.OpDrill, admin.OpPrune:
 	default:
-		writeError(w, http.StatusUnprocessableEntity, "invalid", "op must be backup, verify or restore", map[string]string{"op": "must be backup, verify or restore"})
+		writeError(w, http.StatusUnprocessableEntity, "invalid", "op must be backup, verify, restore, drill or prune", map[string]string{"op": "must be backup, verify, restore, drill or prune"})
 		return
 	}
 	if req.RunID != "" && !admin.ValidID(req.RunID) {

@@ -78,7 +78,11 @@ function partsIn(date: Date, timeZone: string): Parts {
   }
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+export function zonedParts(date: Date, timeZone: string): Parts {
+  return partsIn(date, timeZone)
+}
+
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function dayNumber(p: Parts): number {
   return Date.UTC(p.year, p.month - 1, p.day) / 86_400_000

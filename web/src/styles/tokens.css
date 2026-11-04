@@ -30,6 +30,7 @@
   --badge-bg: #ffefcf;
   --badge-fg: #7a4300;
   --bar: #c7c7c7;
+  --chart: #666666;
   --row-sel: #f2f7ff;
   --ring: rgba(0, 0, 0, 0.06);
   color-scheme: light;
@@ -66,6 +67,7 @@
     --badge-bg: #3d2a06;
     --badge-fg: #ffc96b;
     --bar: #4a4a4a;
+  --chart: #a1a1a1;
     --row-sel: #0b1a2c;
     --ring: rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -102,6 +104,7 @@
   --badge-bg: #3d2a06;
   --badge-fg: #ffc96b;
   --bar: #4a4a4a;
+  --chart: #a1a1a1;
   --row-sel: #0b1a2c;
   --ring: rgba(0, 0, 0, 0.5);
   color-scheme: dark;

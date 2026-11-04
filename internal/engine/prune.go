@@ -27,11 +27,12 @@ const (
 )
 
 type PruneItem struct {
-	Snapshot   string    `json:"snapshot"`
-	FinishedAt time.Time `json:"finished_at,omitzero"`
-	Action     string    `json:"action"`
-	Reasons    []string  `json:"reasons,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	Snapshot    string    `json:"snapshot"`
+	FinishedAt  time.Time `json:"finished_at,omitzero"`
+	Action      string    `json:"action"`
+	Reasons     []string  `json:"reasons,omitempty"`
+	StoredBytes int64     `json:"stored_bytes,omitempty"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type PruneReport struct {
@@ -41,7 +42,15 @@ type PruneReport struct {
 	Kept              int         `json:"kept"`
 	Removed           int         `json:"removed"`
 	Errors            int         `json:"errors"`
+	FreedBytes        int64       `json:"freed_bytes"`
 	RunRecordsRemoved int         `json:"run_records_removed"`
+}
+
+func (r *PruneReport) Summary() *admin.PruneSummary {
+	if r == nil {
+		return nil
+	}
+	return &admin.PruneSummary{Kept: r.Kept, Removed: r.Removed, Errors: r.Errors, FreedBytes: r.FreedBytes, RunRecordsRemoved: r.RunRecordsRemoved}
 }
 
 func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*PruneReport, error) {
@@ -58,7 +67,9 @@ func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*Prune
 	if err == nil && rep.Errors > 0 {
 		failErr = fmt.Errorf("%d snapshot(s) could not be removed", rep.Errors)
 	}
-	e.writeRecord(ctx, job, e.newRecord(ctx, job, admin.OpPrune, start, failErr))
+	rec := e.newRecord(ctx, job, admin.OpPrune, start, failErr)
+	rec.Prune = rep.Summary()
+	e.writeRecord(ctx, job, rec)
 	if failErr != nil {
 		e.Metrics.Set(metrics.PruneLastFailure, metrics.Job(job.Name), unix(e.now()))
 	}
@@ -134,7 +145,7 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 		decisions = retention.Apply(retention.Policy{Last: p.Last, Hourly: p.Hourly, Daily: p.Daily, Weekly: p.Weekly, Monthly: p.Monthly, Yearly: p.Yearly}, snaps, e.Cfg.Location())
 	}
 	for _, d := range decisions {
-		item := PruneItem{Snapshot: d.ID, FinishedAt: d.FinishedAt, Action: ActionKeep, Reasons: d.Reasons}
+		item := PruneItem{Snapshot: d.ID, FinishedAt: d.FinishedAt, Action: ActionKeep, Reasons: d.Reasons, StoredBytes: storedSize(manifests[d.ID])}
 		if !d.Keep {
 			item.Action = ActionRemove
 			if !dryRun {
@@ -181,6 +192,7 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 			rep.Kept++
 		case it.Action == ActionRemove && it.Error == "":
 			rep.Removed++
+			rep.FreedBytes += it.StoredBytes
 		case it.Action == ActionRemove:
 			rep.Kept++
 		}

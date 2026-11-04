@@ -8,6 +8,7 @@ export const HEALTH: Record<JobHealth, StatusInfo> = {
   failing: { text: 'Failing', tone: 'fail' },
   running: { text: 'Running', tone: 'run' },
   stale: { text: 'Stale', tone: 'fail' },
+  drill_failing: { text: 'Drill failing', tone: 'fail' },
   verify_overdue: { text: 'Verify overdue', tone: 'warn' },
   never_run: { text: 'Never run', tone: 'neutral' },
 }
@@ -21,6 +22,14 @@ export const RUN_STATE: Record<RunState, StatusInfo> = {
 }
 
 export const VERIFY_STATE: Record<RunState, StatusInfo> = {
+  queued: { text: 'Queued', tone: 'neutral' },
+  running: { text: 'Running', tone: 'run' },
+  succeeded: { text: 'Passed', tone: 'ok' },
+  failed: { text: 'Failed', tone: 'fail' },
+  unknown: { text: 'Unknown', tone: 'warn' },
+}
+
+export const DRILL_STATE: Record<RunState, StatusInfo> = {
   queued: { text: 'Queued', tone: 'neutral' },
   running: { text: 'Running', tone: 'run' },
   succeeded: { text: 'Passed', tone: 'ok' },
@@ -48,11 +57,14 @@ export const OP_LABEL: Record<Op, string> = {
   verify: 'Verify',
   restore: 'Restore',
   prune: 'Prune',
+  drill: 'Restore drill',
 }
 
 export const AUDIT_ACTIONS: { value: AuditAction; label: string }[] = [
   { value: 'backup.run', label: 'Backup started' },
   { value: 'verify.run', label: 'Verify started' },
+  { value: 'drill.run', label: 'Drill started' },
+  { value: 'prune.run', label: 'Prune started' },
   { value: 'restore.run', label: 'Restore started' },
   { value: 'restore.request', label: 'Restore requested' },
   { value: 'approval.approve', label: 'Approval granted' },
@@ -63,6 +75,7 @@ export const AUDIT_ACTIONS: { value: AuditAction; label: string }[] = [
   { value: 'auth.logout', label: 'Sign-out' },
   { value: 'auth.denied', label: 'Sign-in denied' },
   { value: 'access.denied', label: 'Access denied' },
+  { value: 'config.view', label: 'Configuration viewed' },
 ]
 
 export function auditActionLabel(action: AuditAction): string {

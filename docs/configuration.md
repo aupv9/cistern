@@ -156,6 +156,7 @@ Values every job inherits unless it sets its own.
 | `hooks` | map | — | `pre_backup`, `post_backup`, `pre_restore`, `post_restore`. **Accepted but not executed yet** |
 | `params` | map | `{}` | Driver parameters. A list value is joined with commas (`databases: [a, b]` → `a,b`) |
 | `restore_targets` | list | one implicit target `original` | Where the [Admin UI](admin-ui.md#restore-targets) may restore to (see below) |
+| `drill` | map | — | [Restore drill](drills.md) of the job (postgres, mysql and s3 only; see below) |
 
 ### Restore targets
 
@@ -175,6 +176,27 @@ restore_targets:
 A job without `restore_targets` has one target, `original`: production, no overrides. The UI can
 only choose among these targets plus `restore_suffix` (for `postgres` and `mysql`), never a free-form
 host. The CLI does not use restore targets.
+
+### Drill
+
+```yaml
+drill:
+  schedule: "0 4 * * 0"
+  target: scratch
+  checks:
+    - { name: orders exist, database: orders, sql: "SELECT count(*) FROM orders", min: 1 }
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `schedule` | string | — | Cron expression for drills (daemon only); without it drills run only on demand |
+| `target` | string | — | A restore target of this job with `production: false` (required) |
+| `restore_suffix` | string | `_drill` | Suffix of the drill databases (s3: drill prefix without the `_`); `^_[a-z0-9_]{1,30}$` |
+| `max_age_days` | int | `35` | Health `drill_failing` and alert `drill_stale` after this many days without a passed drill |
+| `keep` | bool | `false` | Keep the drill databases or objects after the checks; the next drill replaces them |
+| `checks` | list | `[]` | SQL checks, postgres and mysql only: `name` (unique), `sql` (one value), `database` (original name; required with several databases), and `min`/`max` (numbers) or `equals` (string) |
+
+See [Restore drills](drills.md) for what each check does and the safety marker.
 
 ### Retention
 
@@ -236,6 +258,7 @@ Configuration of `cistern server`, the [Admin UI](admin-ui.md). Ignored by every
 | `rate_limit.login_per_minute` | int | `10` | Requests per minute to `/api/v1/auth/login`, `/auth/callback` and `/auth/dev-login` per client address; one sign-in uses two (login and callback) |
 | `rate_limit.write_per_minute` | int | `30` | Non-GET API requests per minute per user |
 | `rate_limit.read_per_minute` | int | `600` | GET API requests per minute per user |
+| `prune.enabled` | bool | `false` | Let admins run a prune from the UI. The daemon then needs repository credentials that may delete; keep it off when only a separate prune job holds them. The prune preview works either way |
 
 Exactly one of `tls.cert_file`/`tls.key_file` and `tls.upstream: true` is required unless the server
 runs with `--insecure-dev-login`, which in turn needs a loopback `listen` and no `tls`.

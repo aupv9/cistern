@@ -694,6 +694,246 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/{job}/drill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: components["parameters"]["Job"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run a restore drill now (restorer); needs a drill section in the job's configuration */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job: components["parameters"]["Job"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @default latest */
+                        snapshot?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunRef"];
+                    };
+                };
+                403: components["responses"]["Error"];
+                404: components["responses"]["Error"];
+                409: components["responses"]["Error"];
+                422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job}/drills": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                job: components["parameters"]["Job"];
+            };
+            cookie?: never;
+        };
+        /** Restore drill results, newest first */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    job: components["parameters"]["Job"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            drills: components["schemas"]["DrillResult"][];
+                        };
+                    };
+                };
+                404: components["responses"]["Error"];
+                422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["Error"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job}/prune/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: components["parameters"]["Job"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What a prune would keep and remove, computed without deleting anything (operator) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job: components["parameters"]["Job"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PrunePreview"];
+                    };
+                };
+                403: components["responses"]["Error"];
+                404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job}/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: components["parameters"]["Job"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run a prune (admin); 403 when deployment.features.prune is false */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job: components["parameters"]["Job"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        reason: string;
+                        /** @description Must equal the job name */
+                        confirm_job: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunRef"];
+                    };
+                };
+                403: components["responses"]["Error"];
+                404: components["responses"]["Error"];
+                409: components["responses"]["Error"];
+                422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The server's configuration file, read-only, with secrets redacted (operator); every read is audited as config.view */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConfigView"];
+                    };
+                };
+                403: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["Error"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs": {
         parameters: {
             query?: never;
@@ -1122,21 +1362,28 @@ export interface components {
                 reachable: boolean;
                 version?: string;
             };
+            features: {
+                /** @description server.prune.enabled: admins may run prune from the UI (the daemon then needs delete permissions) */
+                prune: boolean;
+                /** @description At least one job has a drill section */
+                drills: boolean;
+            };
         };
         /** @enum {string} */
-        Op: "backup" | "verify" | "restore" | "prune";
+        Op: "backup" | "verify" | "restore" | "prune" | "drill";
         /**
          * @description unknown: the daemon restarted or lost the run
          * @enum {string}
          */
         RunState: "queued" | "running" | "succeeded" | "failed" | "unknown";
         /**
-         * @description Precedence: running > failing > stale > verify_overdue > healthy.
+         * @description Precedence: running > failing > stale > drill_failing > verify_overdue > healthy.
          *     failing: last backup failure newer than last success. stale: no success for 36 h.
+         *     drill_failing: job has a drill and its newest drill failed, or no drill passed within drill.max_age_days.
          *     verify_overdue: job has verify_schedule and no successful verify for 8 days.
          * @enum {string}
          */
-        JobHealth: "healthy" | "failing" | "running" | "stale" | "verify_overdue" | "never_run";
+        JobHealth: "healthy" | "failing" | "running" | "stale" | "drill_failing" | "verify_overdue" | "never_run";
         RunPoint: {
             /** @description Run ID; absent for snapshots that have no run record (made before run records existed) */
             id?: string;
@@ -1147,7 +1394,7 @@ export interface components {
         };
         Alert: {
             /** @enum {string} */
-            kind: "backup_failing" | "backup_stale" | "verify_failing" | "verify_stale" | "daemon_unreachable";
+            kind: "backup_failing" | "backup_stale" | "verify_failing" | "verify_stale" | "drill_failing" | "drill_stale" | "daemon_unreachable";
             /** @description Absent for daemon_unreachable */
             job?: string;
             message: string;
@@ -1162,6 +1409,7 @@ export interface components {
             repository: string;
             schedule?: string;
             verify_schedule?: string;
+            drill_schedule?: string;
             health: components["schemas"]["JobHealth"];
             running_op?: components["schemas"]["Op"];
             /** Format: date-time */
@@ -1171,6 +1419,11 @@ export interface components {
             last_failure_error?: string;
             /** Format: date-time */
             last_verify?: string;
+            last_drill?: {
+                state: components["schemas"]["RunState"];
+                /** Format: date-time */
+                at: string;
+            };
             /** Format: date-time */
             next_run?: string;
             snapshots: number;
@@ -1231,6 +1484,8 @@ export interface components {
             };
             restore_targets: components["schemas"]["RestoreTarget"][];
             current_run?: components["schemas"]["Run"];
+            drill?: components["schemas"]["DrillConfig"];
+            last_drill_result?: components["schemas"]["DrillResult"];
         };
         SnapshotSummary: {
             id: string;
@@ -1324,6 +1579,10 @@ export interface components {
             stored_bytes?: number;
             error?: string;
             progress?: components["schemas"]["Progress"];
+            /** @description Present when op is drill and the run has finished */
+            drill?: components["schemas"]["DrillResult"];
+            /** @description Present when op is prune and the run has finished */
+            prune?: components["schemas"]["PruneSummary"];
             /** @description Last log lines of the run, newest last */
             log_tail?: string[];
         };
@@ -1378,7 +1637,7 @@ export interface components {
             can_decide?: boolean;
         };
         /** @enum {string} */
-        AuditAction: "auth.login" | "auth.denied" | "auth.logout" | "backup.run" | "verify.run" | "prune.run" | "restore.run" | "restore.request" | "approval.approve" | "approval.reject" | "approval.expire" | "run.finish" | "access.denied";
+        AuditAction: "auth.login" | "auth.denied" | "auth.logout" | "backup.run" | "verify.run" | "drill.run" | "prune.run" | "restore.run" | "restore.request" | "approval.approve" | "approval.reject" | "approval.expire" | "run.finish" | "access.denied" | "config.view";
         /** @enum {string} */
         AuditResult: "accepted" | "succeeded" | "failed" | "denied" | "pending";
         AuditEntry: {
@@ -1403,6 +1662,106 @@ export interface components {
             source_ip?: string;
             /** @description One human-readable sentence */
             summary?: string;
+        };
+        DrillConfig: {
+            /** @description Cron expression; absent means drills run only on demand */
+            schedule?: string;
+            /** @description A non-production restore target of the job */
+            target: string;
+            /** @description Suffix of the drill databases, default _drill */
+            restore_suffix: string;
+            /** @description drill_stale after this many days without a passed drill, default 35 */
+            max_age_days: number;
+            /** @description Keep the drill databases after the checks instead of dropping them */
+            keep: boolean;
+            /** @description Number of configured SQL checks */
+            checks?: number;
+        };
+        DrillCheck: {
+            name: string;
+            /** @enum {string} */
+            kind: "restore" | "tables" | "rows" | "sql" | "objects" | "cleanup";
+            /** @enum {string} */
+            status: "passed" | "failed" | "skipped";
+            expected?: string;
+            actual?: string;
+            message?: string;
+        };
+        DrillTable: {
+            database: string;
+            name: string;
+            rows: number;
+        };
+        DrillResult: {
+            run_id: string;
+            job: string;
+            snapshot: string;
+            target: string;
+            state: components["schemas"]["RunState"];
+            /** @enum {string} */
+            trigger?: "schedule" | "cli" | "ui";
+            requested_by?: components["schemas"]["Actor"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string;
+            duration_ms?: number;
+            restored_bytes?: number;
+            checks: components["schemas"]["DrillCheck"][];
+            /** @description Row counts of the restored tables, largest first */
+            tables?: components["schemas"]["DrillTable"][];
+            /** @description Number of restored tables counted, not capped like tables */
+            total_tables?: number;
+            /** @description Sum of the row counts of all restored tables, not capped like tables */
+            total_rows?: number;
+            cleaned_up?: boolean;
+            error?: string;
+        };
+        PruneItem: {
+            snapshot: string;
+            /** Format: date-time */
+            finished_at?: string;
+            /** @enum {string} */
+            action: "keep" | "remove" | "remove-incomplete";
+            /** @description Retention rules that keep it (last, daily, …, depends_on, no retention policy). Empty for action remove: no rule keeps it. For remove-incomplete it says why (incomplete, older than 1h) */
+            reasons: string[];
+            stored_bytes?: number;
+            /**
+             * Format: date-time
+             * @description Object Lock retain-until; a remove before this date will fail
+             */
+            lock_until?: string;
+        };
+        PrunePreview: {
+            job: string;
+            items: components["schemas"]["PruneItem"][];
+            kept: number;
+            removed: number;
+            /** @description Stored bytes of the snapshots to remove, including those still under Object Lock (their space is freed only when the lock expires) */
+            freed_bytes: number;
+            /** @description Snapshots to remove that are still under Object Lock */
+            locked: number;
+            run_records_removed: number;
+        };
+        PruneSummary: {
+            kept: number;
+            removed: number;
+            errors: number;
+            freed_bytes?: number;
+            run_records_removed: number;
+        };
+        ConfigView: {
+            path: string;
+            /** Format: date-time */
+            loaded_at: string;
+            /** @description The file as written, ${VAR} references kept, every literal secret value replaced by <redacted> */
+            yaml: string;
+            /** @description Places where a secret is written into the file instead of referenced from the environment */
+            literal_secrets: {
+                /** @description e.g. jobs[orders-db].params.password */
+                path: string;
+                line: number;
+            }[];
         };
     };
     responses: {

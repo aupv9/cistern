@@ -443,6 +443,7 @@ func (e *Engine) RefreshMetrics(ctx context.Context) {
 	e.Metrics.Set(metrics.BuildInfo, metrics.Labels{{"version", e.Version}}, 1)
 	for _, job := range e.Cfg.Jobs {
 		e.refreshJob(ctx, job)
+		e.refreshDrill(ctx, job)
 		r, prefix, err := e.repoFor(job)
 		if err != nil {
 			continue
@@ -462,6 +463,7 @@ type JobStatus struct {
 	LastSuccess       *time.Time `json:"last_success,omitempty"`
 	LastFailure       *time.Time `json:"last_failure,omitempty"`
 	LastVerifySuccess *time.Time `json:"last_verify_success,omitempty"`
+	LastDrillSuccess  *time.Time `json:"last_drill_success,omitempty"`
 }
 
 func (e *Engine) Status() map[string]any {
@@ -481,6 +483,7 @@ func (e *Engine) Status() map[string]any {
 			LastSuccess:       ts(metrics.BackupLastSuccess, j.Name),
 			LastFailure:       ts(metrics.BackupLastFailure, j.Name),
 			LastVerifySuccess: ts(metrics.VerifyLastSuccess, j.Name),
+			LastDrillSuccess:  ts(metrics.DrillLastSuccess, j.Name),
 		})
 	}
 	return map[string]any{"version": e.Version, "host": e.hostname, "jobs": jobs}

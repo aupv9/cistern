@@ -36,6 +36,7 @@ var (
 
 func init() {
 	driver.Register("uitest", func(p driver.Params) (driver.Driver, error) { return &uiDriver{p: p}, nil })
+	config.DrillDrivers["uitest"] = true
 }
 
 func (d *uiDriver) Name() string                { return "uitest" }
@@ -99,6 +100,7 @@ var secrets = map[string]string{
 	"SESSION_KEY":      "session-key-SECRET-6-xxxxxxxxxxxxxxxxxxxxxx",
 	"STAGING_PASSWORD": "staging-SECRET-7",
 	"WEBHOOK_URL":      "https://hooks.example.com/SECRET-8",
+	"LITERAL_PASSWORD": "literal-SECRET-9",
 }
 
 const testConfig = `
@@ -140,7 +142,7 @@ jobs:
     params: { fail: "true", password: "${PG_PASSWORD}" }
   - name: idle
     driver: uitest
-    params: {}
+    params: { password: literal-SECRET-9 }
 `
 
 type env struct {
@@ -605,6 +607,17 @@ func TestServerEndToEnd(t *testing.T) {
 	})
 	if stored != len(e.auditEntries("")) {
 		t.Fatalf("audit objects %d, stdout lines %d", stored, len(e.auditEntries("")))
+	}
+
+	var cv configView
+	op.json("GET", "/api/v1/config", nil, 200, &cv)
+	if !strings.Contains(cv.YAML, `password: "${PG_PASSWORD}"`) || !strings.Contains(cv.YAML, "client_secret: \"${OIDC_SECRET}\"") ||
+		len(cv.LiteralSecrets) != 1 || cv.LiteralSecrets[0].Path != "jobs[idle].params.password" || cv.Path == "" || cv.LoadedAt.IsZero() {
+		t.Fatalf("config view: %+v", cv)
+	}
+	viewer.expectError("GET", "/api/v1/config", nil, 403, codeForbidden)
+	if n := len(e.auditEntries(ActionConfigView)); n != 1 {
+		t.Fatalf("config.view entries: %d", n)
 	}
 
 	op.json("POST", "/api/v1/auth/logout", nil, 204, nil)

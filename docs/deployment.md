@@ -83,6 +83,11 @@ The manifests expect these objects, which you create:
 | Secret `cistern-daemon-token` (with the Admin UI) | key `token`: the shared daemon API token, at least 32 characters | `CISTERN_DAEMON_TOKEN` in the daemon (optional) and the server |
 | Secret `cistern-server-env` (Admin UI) | `CISTERN_SESSION_KEY`, the OIDC client secret and the repository credentials the server needs; not `CISTERN_RECIPIENT`, since the server ignores `encryption` | environment of the server |
 
+The daemon has no delete permission in this layout, which is why pruning from the Admin UI
+(`server.prune.enabled`) is off by default: turning it on means giving the daemon the credentials of
+`cistern-prune-env`. [Restore drills](drills.md) run in the daemon too, so it needs network access
+and credentials for the drill target (through `restore_targets[].set`, referenced from `cistern-env`).
+
 A minimal overlay:
 
 ```yaml

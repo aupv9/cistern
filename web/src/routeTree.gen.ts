@@ -14,11 +14,13 @@ import { Route as DeniedRouteImport } from './routes/denied'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAuditRouteImport } from './routes/_app/audit'
+import { Route as AppConfigRouteImport } from './routes/_app/config'
 import { Route as AppApprovalsIndexRouteImport } from './routes/_app/approvals.index'
 import { Route as AppApprovalsIdRouteImport } from './routes/_app/approvals.$id'
 import { Route as AppJobsIndexRouteImport } from './routes/_app/jobs.index'
 import { Route as AppRunsRunRouteImport } from './routes/_app/runs.$run'
 import { Route as AppJobsJobIndexRouteImport } from './routes/_app/jobs.$job.index'
+import { Route as AppJobsJobPruneRouteImport } from './routes/_app/jobs.$job.prune'
 import { Route as AppJobsJobRestoreRouteImport } from './routes/_app/jobs.$job.restore'
 
 const AppRoute = AppRouteImport.update({
@@ -43,6 +45,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppAuditRoute = AppAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppConfigRoute = AppConfigRouteImport.update({
+  id: '/config',
+  path: '/config',
   getParentRoute: () => AppRoute,
 } as any)
 const AppApprovalsIndexRoute = AppApprovalsIndexRouteImport.update({
@@ -70,6 +77,11 @@ const AppJobsJobIndexRoute = AppJobsJobIndexRouteImport.update({
   path: '/jobs/$job/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppJobsJobPruneRoute = AppJobsJobPruneRouteImport.update({
+  id: '/jobs/$job/prune',
+  path: '/jobs/$job/prune',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppJobsJobRestoreRoute = AppJobsJobRestoreRouteImport.update({
   id: '/jobs/$job/restore',
   path: '/jobs/$job/restore',
@@ -81,10 +93,12 @@ export interface FileRoutesByFullPath {
   '/denied': typeof DeniedRoute
   '/signin': typeof SigninRoute
   '/audit': typeof AppAuditRoute
+  '/config': typeof AppConfigRoute
   '/approvals/$id': typeof AppApprovalsIdRoute
   '/runs/$run': typeof AppRunsRunRoute
   '/approvals/': typeof AppApprovalsIndexRoute
   '/jobs/': typeof AppJobsIndexRoute
+  '/jobs/$job/prune': typeof AppJobsJobPruneRoute
   '/jobs/$job/restore': typeof AppJobsJobRestoreRoute
   '/jobs/$job/': typeof AppJobsJobIndexRoute
 }
@@ -92,11 +106,13 @@ export interface FileRoutesByTo {
   '/denied': typeof DeniedRoute
   '/signin': typeof SigninRoute
   '/audit': typeof AppAuditRoute
+  '/config': typeof AppConfigRoute
   '/': typeof AppIndexRoute
   '/approvals/$id': typeof AppApprovalsIdRoute
   '/runs/$run': typeof AppRunsRunRoute
   '/approvals': typeof AppApprovalsIndexRoute
   '/jobs': typeof AppJobsIndexRoute
+  '/jobs/$job/prune': typeof AppJobsJobPruneRoute
   '/jobs/$job/restore': typeof AppJobsJobRestoreRoute
   '/jobs/$job': typeof AppJobsJobIndexRoute
 }
@@ -106,11 +122,13 @@ export interface FileRoutesById {
   '/denied': typeof DeniedRoute
   '/signin': typeof SigninRoute
   '/_app/audit': typeof AppAuditRoute
+  '/_app/config': typeof AppConfigRoute
   '/_app/': typeof AppIndexRoute
   '/_app/approvals/$id': typeof AppApprovalsIdRoute
   '/_app/runs/$run': typeof AppRunsRunRoute
   '/_app/approvals/': typeof AppApprovalsIndexRoute
   '/_app/jobs/': typeof AppJobsIndexRoute
+  '/_app/jobs/$job/prune': typeof AppJobsJobPruneRoute
   '/_app/jobs/$job/restore': typeof AppJobsJobRestoreRoute
   '/_app/jobs/$job/': typeof AppJobsJobIndexRoute
 }
@@ -121,10 +139,12 @@ export interface FileRouteTypes {
     | '/denied'
     | '/signin'
     | '/audit'
+    | '/config'
     | '/approvals/$id'
     | '/runs/$run'
     | '/approvals/'
     | '/jobs/'
+    | '/jobs/$job/prune'
     | '/jobs/$job/restore'
     | '/jobs/$job/'
   fileRoutesByTo: FileRoutesByTo
@@ -132,11 +152,13 @@ export interface FileRouteTypes {
     | '/denied'
     | '/signin'
     | '/audit'
+    | '/config'
     | '/'
     | '/approvals/$id'
     | '/runs/$run'
     | '/approvals'
     | '/jobs'
+    | '/jobs/$job/prune'
     | '/jobs/$job/restore'
     | '/jobs/$job'
   id:
@@ -145,11 +167,13 @@ export interface FileRouteTypes {
     | '/denied'
     | '/signin'
     | '/_app/audit'
+    | '/_app/config'
     | '/_app/'
     | '/_app/approvals/$id'
     | '/_app/runs/$run'
     | '/_app/approvals/'
     | '/_app/jobs/'
+    | '/_app/jobs/$job/prune'
     | '/_app/jobs/$job/restore'
     | '/_app/jobs/$job/'
   fileRoutesById: FileRoutesById
@@ -197,6 +221,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuditRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/config': {
+      id: '/_app/config'
+      path: '/config'
+      fullPath: '/config'
+      preLoaderRoute: typeof AppConfigRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/approvals/': {
       id: '/_app/approvals/'
       path: '/approvals'
@@ -232,6 +263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppJobsJobIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/jobs/$job/prune': {
+      id: '/_app/jobs/$job/prune'
+      path: '/jobs/$job/prune'
+      fullPath: '/jobs/$job/prune'
+      preLoaderRoute: typeof AppJobsJobPruneRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/jobs/$job/restore': {
       id: '/_app/jobs/$job/restore'
       path: '/jobs/$job/restore'
@@ -244,22 +282,26 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAuditRoute: typeof AppAuditRoute
+  AppConfigRoute: typeof AppConfigRoute
   AppIndexRoute: typeof AppIndexRoute
   AppApprovalsIdRoute: typeof AppApprovalsIdRoute
   AppRunsRunRoute: typeof AppRunsRunRoute
   AppApprovalsIndexRoute: typeof AppApprovalsIndexRoute
   AppJobsIndexRoute: typeof AppJobsIndexRoute
+  AppJobsJobPruneRoute: typeof AppJobsJobPruneRoute
   AppJobsJobRestoreRoute: typeof AppJobsJobRestoreRoute
   AppJobsJobIndexRoute: typeof AppJobsJobIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAuditRoute: AppAuditRoute,
+  AppConfigRoute: AppConfigRoute,
   AppIndexRoute: AppIndexRoute,
   AppApprovalsIdRoute: AppApprovalsIdRoute,
   AppRunsRunRoute: AppRunsRunRoute,
   AppApprovalsIndexRoute: AppApprovalsIndexRoute,
   AppJobsIndexRoute: AppJobsIndexRoute,
+  AppJobsJobPruneRoute: AppJobsJobPruneRoute,
   AppJobsJobRestoreRoute: AppJobsJobRestoreRoute,
   AppJobsJobIndexRoute: AppJobsJobIndexRoute,
 }

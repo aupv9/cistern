@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cistern/internal/driver"
@@ -313,6 +314,10 @@ func (d *Driver) Restore(ctx context.Context, src driver.Source) error {
 		}
 	}
 
+	return d.restoreObjects(ctx, c, src, sel, targetKey, nil)
+}
+
+func (d *Driver) restoreObjects(ctx context.Context, c *s3c.Client, src driver.Source, sel []Entry, targetKey func(string) string, n *atomic.Int64) error {
 	sources := map[string]driver.Source{}
 	open := func(e Entry) (io.ReadCloser, error) {
 		s := src
@@ -324,6 +329,7 @@ func (d *Driver) Restore(ctx context.Context, src driver.Source) error {
 				if !ok {
 					return nil, fmt.Errorf("object %q is stored in snapshot %s, which this source cannot open", e.Key, e.Snapshot)
 				}
+				var err error
 				if s, err = r.Snapshot(e.Snapshot); err != nil {
 					return nil, err
 				}
@@ -337,7 +343,11 @@ func (d *Driver) Restore(ctx context.Context, src driver.Source) error {
 		if err != nil {
 			return fmt.Errorf("object %q: %w", e.Key, err)
 		}
-		if err := c.Upload(ctx, targetKey(e.Key), rc, s3c.PutOptions{ContentType: e.ContentType}); err != nil {
+		var in io.Reader = rc
+		if n != nil {
+			in = driver.CountingReader{R: rc, N: n}
+		}
+		if err := c.Upload(ctx, targetKey(e.Key), in, s3c.PutOptions{ContentType: e.ContentType}); err != nil {
 			driver.Abort(rc)
 			return fmt.Errorf("object %q: %w", e.Key, err)
 		}

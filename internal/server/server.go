@@ -51,6 +51,8 @@ type Server struct {
 	audit     *auditStore
 	approvals *approvalStore
 	tracker   *runTracker
+	planner   *engine.Engine
+	loadedAt  time.Time
 
 	handler http.Handler
 }
@@ -106,8 +108,10 @@ func New(opt Options) (*Server, error) {
 		})
 	}
 
+	s.loadedAt = time.Now().UTC()
 	repos := engine.NewRepos(cfg, log)
 	s.data = newStore(cfg, repos, log)
+	s.planner = engine.NewPlanner(cfg, repos, log)
 	stateRepo, statePrefix, err := repos.Open(sc.StateRepository)
 	if err != nil {
 		return nil, fmt.Errorf("server.state_repository: %w", err)

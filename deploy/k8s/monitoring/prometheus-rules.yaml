@@ -12,26 +12,38 @@ spec:
               > (cistern_backup_last_success_timestamp_seconds or cistern_backup_last_failure_timestamp_seconds * 0)
           labels: { severity: critical }
           annotations:
-            summary: "Backup {{ $labels.cistern_job }} đang lỗi"
+            summary: "Backup of {{ $labels.cistern_job }} is failing"
         - alert: CisternBackupStale
           expr: time() - cistern_backup_last_success_timestamp_seconds > 36 * 3600
           labels: { severity: critical }
           annotations:
-            summary: "Backup {{ $labels.cistern_job }} quá 36 giờ chưa thành công"
+            summary: "No successful backup of {{ $labels.cistern_job }} for 36 hours"
         - alert: CisternBackupSizeDrop
           expr: cistern_backup_last_size_bytes < 0.5 * cistern_backup_previous_size_bytes
           labels: { severity: warning }
           annotations:
-            summary: "Bản backup mới nhất của {{ $labels.cistern_job }} nhỏ hơn một nửa bản trước"
+            summary: "The newest backup of {{ $labels.cistern_job }} is less than half the size of the previous one"
         - alert: CisternVerifyStale
           expr: time() - cistern_verify_last_success_timestamp_seconds > 8 * 86400
           labels: { severity: warning }
           annotations:
-            summary: "{{ $labels.cistern_job }} quá 8 ngày chưa verify/restore thành công"
+            summary: "No successful verify or restore of {{ $labels.cistern_job }} for 8 days"
         - alert: CisternVerifyFailing
           expr: |
             cistern_verify_last_failure_timestamp_seconds
               > (cistern_verify_last_success_timestamp_seconds or cistern_verify_last_failure_timestamp_seconds * 0)
           labels: { severity: critical }
           annotations:
-            summary: "Verify {{ $labels.cistern_job }} phát hiện snapshot hỏng"
+            summary: "Verify found a damaged snapshot of {{ $labels.cistern_job }}"
+        - alert: CisternDrillFailing
+          expr: |
+            cistern_drill_last_failure_timestamp_seconds
+              > (cistern_drill_last_success_timestamp_seconds or cistern_drill_last_failure_timestamp_seconds * 0)
+          labels: { severity: critical }
+          annotations:
+            summary: "The restore drill of {{ $labels.cistern_job }} is failing"
+        - alert: CisternDrillStale
+          expr: time() - cistern_drill_last_success_timestamp_seconds > 35 * 86400
+          labels: { severity: warning }
+          annotations:
+            summary: "No passed restore drill of {{ $labels.cistern_job }} for 35 days"

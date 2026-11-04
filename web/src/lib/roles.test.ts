@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Me } from '~/api/queries'
-import { blockReason, can, describeRoles, readOnlyReason } from './roles'
+import { blockReason, can, canRunPrune, describeRoles, pruneRunBlock, readOnlyReason } from './roles'
 
-function me(roles: Me['roles'], daemon = { configured: true, reachable: true }): Me {
+function me(roles: Me['roles'], daemon = { configured: true, reachable: true }, features = { prune: true, drills: true }): Me {
   return {
     user: { id: 'u1', email: 'a@example.com', name: 'A' },
     roles,
     csrf_token: 't',
     session_expires_at: '2026-11-03T10:00:00Z',
-    deployment: { name: 'production', version: '0.3.0', timezone: 'UTC', daemon },
+    deployment: { name: 'production', version: '0.3.0', timezone: 'UTC', daemon, features },
   }
 }
 
@@ -35,5 +35,29 @@ describe('role gating', () => {
     expect(blockReason(me(['viewer', 'operator'], { configured: true, reachable: false }), 'backup')).toMatch(/not reachable/)
     expect(blockReason(me(['viewer']), 'backup')).toBe('Needs the Operator role.')
     expect(blockReason(me(['viewer', 'operator']), 'backup')).toBeNull()
+  })
+
+  it('gates drills, prune and the configuration view', () => {
+    expect(can(['viewer', 'operator'], 'drill')).toBe(false)
+    expect(can(['viewer', 'restorer'], 'drill')).toBe(true)
+    expect(can(['viewer'], 'prune_preview')).toBe(false)
+    expect(can(['viewer', 'operator'], 'prune_preview')).toBe(true)
+    expect(can(['viewer', 'operator', 'restorer'], 'prune')).toBe(false)
+    expect(can(['viewer', 'admin'], 'prune')).toBe(true)
+    expect(can(['viewer'], 'config')).toBe(false)
+    expect(can(['viewer', 'operator'], 'config')).toBe(true)
+    expect(blockReason(me(['viewer', 'operator'], { configured: true, reachable: false }), 'prune_preview')).toBeNull()
+    expect(blockReason(me(['viewer', 'restorer'], { configured: true, reachable: false }), 'drill')).toMatch(/not reachable/)
+  })
+
+  it('runs prune only for admins when the server enables it', () => {
+    expect(pruneRunBlock(me(['viewer', 'operator']))).toBe('Running a prune needs the Admin role.')
+    expect(canRunPrune(me(['viewer', 'operator']))).toBe(false)
+    expect(pruneRunBlock(me(['viewer', 'admin']))).toBeNull()
+    expect(canRunPrune(me(['viewer', 'admin']))).toBe(true)
+    const off = me(['viewer', 'admin'], { configured: true, reachable: true }, { prune: false, drills: true })
+    expect(canRunPrune(off)).toBe(false)
+    expect(pruneRunBlock(off)).toMatch(/runs from the CLI or the prune CronJob/)
+    expect(pruneRunBlock(me(['viewer', 'admin'], { configured: true, reachable: false }))).toMatch(/not reachable/)
   })
 })

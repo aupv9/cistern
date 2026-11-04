@@ -69,6 +69,11 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Execute != nil {
 		runner = func(ctx context.Context, job, op string) error {
 			req := &RunRequest{Job: job, Op: op, Trigger: admin.TriggerSchedule, RequestedBy: &admin.ActorScheduler}
+			if opt.Prepare != nil {
+				if err := opt.Prepare(req); err != nil {
+					return err
+				}
+			}
 			e, err := d.reg.begin(req)
 			if err != nil {
 				return err

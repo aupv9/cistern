@@ -26,6 +26,12 @@ jobs:
       user: root
       password: ${DB_PASSWORD}
       databases: [orders, users]
+    restore_targets:
+      - { name: scratch, description: "same server, *_drill", production: false }
+    drill:
+      target: scratch
+      checks:
+        - { name: orders count, database: orders, sql: "SELECT COUNT(*) FROM orders", equals: "100000" }
 YAML
 
 step "seed: 100k rows (utf8mb4, BLOB), view, function, procedure, trigger, event"
@@ -89,6 +95,29 @@ echo "checksums, collation, utf8mb4, routines, trigger, event and view all match
 step "restore again without clean is refused"
 if cistern restore --job shop --set restore_suffix=_restored --yes 2>err.txt; then fail "overwrite allowed"; fi
 grep -q "already exists" err.txt || { cat err.txt; fail "unexpected error"; }
+
+step "restore drill: restore, count tables and rows, run SQL checks, drop"
+cistern drill --job shop
+cistern drill --job shop --json > drill.json
+[ "$(grep -c '"status": "passed"' drill.json)" = 8 ] || { cat drill.json; fail "expected 8 passed drill checks"; }
+grep -A4 '"name": "tables orders"' drill.json | grep -q '"actual": "2"' || { cat drill.json; fail "orders should have 2 tables (orders, audit)"; }
+grep -A1 '"name": "orders",' drill.json | grep -q '"rows": 100000' || { cat drill.json; fail "orders row count"; }
+grep -q '"cleaned_up": true' drill.json || fail "drill not cleaned up"
+[ "$(q "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('orders_drill', 'users_drill')")" = 0 ] || fail "drill databases left behind"
+
+step "restore drill: a failing SQL check fails the drill and still cleans up"
+sed 's/equals: "100000"/equals: "1"/' cistern.yaml > cistern-fail.yaml
+if cistern drill -c cistern-fail.yaml --job shop > fail.txt 2>&1; then cat fail.txt; fail "drill with a wrong check passed"; fi
+grep -q 'check "orders count" failed' fail.txt || { cat fail.txt; fail "unexpected drill failure"; }
+[ "$(q "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('orders_drill', 'users_drill')")" = 0 ] || fail "failed drill left databases behind"
+
+step "restore drill: never drops a same-named database without the marker"
+q "CREATE DATABASE orders_drill; CREATE TABLE orders_drill.precious (id INT)"
+if cistern drill --job shop 2>err.txt; then fail "drill replaced an unmarked database"; fi
+grep -q "left untouched" err.txt || { cat err.txt; fail "unexpected error"; }
+[ "$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'orders_drill' AND table_name = 'precious'")" = 1 ] || fail "unmarked database was touched"
+q "DROP DATABASE orders_drill"
+echo "unmarked orders_drill left alone"
 
 if command -v apt-get >/dev/null; then
   step "manual DR without cistern: age -d | gunzip | $CLI"

@@ -1,6 +1,6 @@
 # Observability
 
-Cistern reports every backup, verify, prune and restore through Prometheus metrics, structured logs
+Cistern reports every backup, verify, prune, restore and restore drill through Prometheus metrics, structured logs
 and webhooks.
 
 ## Metrics
@@ -22,13 +22,15 @@ use themselves).
 | `cistern_verify_last_success_timestamp_seconds` | gauge | Last successful verify or restore |
 | `cistern_verify_last_failure_timestamp_seconds` | gauge | Last failed verify |
 | `cistern_verify_failures_total` | counter | Artifacts that failed verification since the process started |
+| `cistern_drill_last_success_timestamp_seconds` | gauge | When the last passed [restore drill](drills.md) finished |
+| `cistern_drill_last_failure_timestamp_seconds` | gauge | When the last restore drill failed |
 | `cistern_build_info{version}` | gauge | Always 1 (daemon only) |
 
 ### Getting metrics into Prometheus
 
 | Mode | How |
 | --- | --- |
-| `cistern daemon` | Scrape `/metrics` on `metrics.listen` (`:9464`). On start, the daemon reads the newest snapshot of every job from the repository, so the last success survives restarts |
+| `cistern daemon` | Scrape `/metrics` on `metrics.listen` (`:9464`). On start, the daemon reads the newest snapshot of every job from the repository, so the last success survives restarts; the drill timestamps come from the newest drill run records |
 | One-shot commands (CronJob, systemd timer) | `metrics.pushgateway_url`: each command POSTs its job's metrics to the group `job=cistern, instance=<job>`. Or `metrics.textfile_dir`: each command writes `cistern_<job>.prom` for node_exporter's textfile collector |
 
 A failed run never erases the last success: the Pushgateway's POST only replaces metrics with the
@@ -45,6 +47,8 @@ same name, and textfiles are merged with their previous content.
 | `CisternBackupSizeDrop` | The newest snapshot is less than half the size of the previous one |
 | `CisternVerifyStale` | No successful verify or restore for 8 days |
 | `CisternVerifyFailing` | The last verify failure is newer than the last success |
+| `CisternDrillFailing` | The last drill failure is newer than the last passed drill (or no drill ever passed) |
+| `CisternDrillStale` | No passed restore drill for 35 days (only jobs that ran a drill at least once have the metric) |
 
 The rules compare timestamps instead of using `increase()` on counters, because every CronJob run is
 a new process whose counters start at zero.
@@ -59,7 +63,7 @@ notify:
     - { url: "https://hooks.example.com/cistern", format: json }
 ```
 
-Sent after backup, verify, prune and restore when the outcome matches `on` (default `failure`).
+Sent after backup, verify, prune, restore and drill when the outcome matches `on` (default `failure`).
 
 | Format | Body |
 | --- | --- |

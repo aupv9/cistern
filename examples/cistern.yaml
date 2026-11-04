@@ -64,6 +64,8 @@ server:
     token: ${CISTERN_DAEMON_TOKEN}
   rate_limit: { login_per_minute: 10, write_per_minute: 30, read_per_minute: 600 }
   trusted_proxies: ["10.0.0.0/8"]
+  # Admins may run prune from the UI only when the daemon holds credentials that may delete.
+  prune: { enabled: false }
 
 jobs:
   - name: orders-db
@@ -86,6 +88,14 @@ jobs:
       - name: production
         description: The live orders database server
         production: true
+    # Weekly restore drill into staging as orders_drill, checked and dropped again (docs/drills.md).
+    drill:
+      schedule: "0 4 * * 0"
+      target: staging
+      max_age_days: 14
+      checks:
+        - { name: orders exist, sql: "SELECT count(*) FROM orders", min: 1 }
+        - { name: recent orders, sql: "SELECT count(*) FROM orders WHERE created_at > now() - interval '2 days'", min: 1 }
 
   - name: shop-db
     driver: mysql

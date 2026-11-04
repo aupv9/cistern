@@ -15,6 +15,22 @@ func Prepare(cfg *config.Config, req *daemon.RunRequest) error {
 	if err != nil {
 		return fmt.Errorf("%w: job %q", daemon.ErrNotFound, req.Job)
 	}
+	if req.Op == admin.OpDrill {
+		if len(req.Overrides) > 0 || req.RestoreSuffix != nil {
+			return &daemon.InvalidError{Message: "overrides and restore_suffix are only allowed for restore"}
+		}
+		if !config.SupportsDrill(job.Driver) {
+			return &daemon.InvalidError{Message: engine.ErrDrillUnsupported.Error()}
+		}
+		if job.Drill == nil {
+			return &daemon.InvalidError{Message: "the job has no drill section in the daemon's configuration"}
+		}
+		if req.Target != "" && req.Target != job.Drill.Target {
+			return &daemon.InvalidError{Message: "the drill target differs between the server and the daemon configuration", Fields: map[string]string{"target": "configuration mismatch"}}
+		}
+		req.Target = job.Drill.Target
+		return nil
+	}
 	if req.Op != "restore" {
 		if req.Target != "" || len(req.Overrides) > 0 || req.RestoreSuffix != nil {
 			return &daemon.InvalidError{Message: "target, overrides and restore_suffix are only allowed for restore"}
@@ -78,6 +94,26 @@ func Execute(ctx context.Context, e *engine.Engine, req *daemon.RunRequest) (dae
 			err = fmt.Errorf("verify: %d artifact(s) failed", rep.Failures)
 		}
 		return res, err
+	case admin.OpDrill:
+		snap := req.Snapshot
+		if snap == "" {
+			snap = "latest"
+		}
+		res, err := e.Drill(ctx, req.Job, snap)
+		out := daemon.Result{}
+		if res != nil {
+			out.Snapshot = res.Snapshot
+			out.Drill = &admin.DrillReport{Target: res.Target, RestoredBytes: res.RestoredBytes, Checks: res.Checks, Tables: res.Tables,
+				TotalTables: res.TotalTables, TotalRows: res.TotalRows, CleanedUp: res.CleanedUp}
+		}
+		return out, err
+	case admin.OpPrune:
+		rep, err := e.Prune(ctx, req.Job, false)
+		out := daemon.Result{Prune: rep.Summary()}
+		if err == nil && rep.Errors > 0 {
+			err = fmt.Errorf("prune: %d snapshot(s) could not be removed", rep.Errors)
+		}
+		return out, err
 	case "restore":
 		m, err := e.Restore(ctx, req.Job, req.Snapshot, req.Overrides)
 		var res daemon.Result

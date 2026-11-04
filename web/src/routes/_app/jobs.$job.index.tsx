@@ -2,6 +2,8 @@ import { useId, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { isActive, jobQuery, manifestQuery, snapshotsQuery, type JobDetail, type Me, type Run, type SnapshotSummary } from '~/api/queries'
+import { DrillCard } from '~/components/Drill'
+import { HistorySection } from '~/components/HistoryCharts'
 import { RunStrip, stripSummary } from '~/components/RunStrip'
 import { RunProgress } from '~/components/RunProgress'
 import { BlockSkeleton, PageSkeleton, TableSkeleton } from '~/components/Skeleton'
@@ -151,6 +153,14 @@ function JobView({ job, me, now }: { job: JobDetail; me: Me; now: Date }) {
               {retentionText(job.retention)}
               <br />
               {plural(job.snapshots, 'snapshot')} kept, {formatBytes(job.stored_bytes)}
+              {can(me.roles, 'prune_preview') ? (
+                <>
+                  <br />
+                  <Link to="/jobs/$job/prune" params={{ job: job.name }}>
+                    Preview prune
+                  </Link>
+                </>
+              ) : null}
             </span>
           </div>
           <div className="cell">
@@ -181,7 +191,11 @@ function JobView({ job, me, now }: { job: JobDetail; me: Me; now: Date }) {
 
       {job.current_run ? <CurrentRun run={job.current_run} tz={tz} now={now} /> : null}
 
+      <DrillCard job={job} me={me} now={now} />
+
       <Snapshots job={job} me={me} now={now} />
+
+      <HistorySection job={job.name} tz={tz} now={now} />
     </div>
   )
 }

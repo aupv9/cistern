@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { isActive, runQuery, type Run } from '~/api/queries'
+import { DrillResultView } from '~/components/Drill'
 import { ErrorIcon } from '~/components/Icons'
+import { PruneSummaryView } from '~/components/Prune'
 import { RunProgress } from '~/components/RunProgress'
 import { PageSkeleton } from '~/components/Skeleton'
 import { ErrorState } from '~/components/States'
@@ -10,7 +12,8 @@ import { Status } from '~/components/Status'
 import { useMe } from '~/hooks/useMe'
 import { useNow } from '~/hooks/useNow'
 import { formatBytes, formatDuration, formatElapsed, formatWhen } from '~/lib/format'
-import { OP_LABEL, RUN_STATE } from '~/lib/status'
+import { drillState } from '~/lib/drill'
+import { DRILL_STATE, OP_LABEL, RUN_STATE } from '~/lib/status'
 
 export const Route = createFileRoute('/_app/runs/$run')({
   head: ({ params }) => ({ meta: [{ title: `Run ${params.run} · Cistern` }] }),
@@ -165,6 +168,42 @@ function RunPage() {
           </dl>
         </div>
       </section>
+
+      {run.op === 'drill' && run.drill && !active ? (
+        <section aria-labelledby="drill-res-h" className="card">
+          <div className="hd">
+            <h2 id="drill-res-h" className="h2">
+              Drill result
+            </h2>
+            <Status info={DRILL_STATE[drillState(run.drill)]} />
+          </div>
+          <div className="body">
+            <DrillResultView result={run.drill} tz={tz} now={now} showRunLink={false} />
+          </div>
+        </section>
+      ) : null}
+
+      {run.op === 'prune' && run.prune && !active ? (
+        <section aria-labelledby="prune-res-h" className="card card-clip">
+          <div className="hd">
+            <h2 id="prune-res-h" className="h2">
+              Prune result
+            </h2>
+            <Link to="/jobs/$job/prune" params={{ job: run.job }}>
+              Preview again
+            </Link>
+          </div>
+          <PruneSummaryView summary={run.prune} />
+          {run.prune.errors ? (
+            <div className="body">
+              <span className="sub">
+                {run.prune.errors === 1 ? '1 snapshot' : `${run.prune.errors} snapshots`} could not be removed, usually because Object Lock still protects
+                them. The next prune after the lock expires removes them.
+              </span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section aria-labelledby="log-h" className="card">
         <div className="hd">

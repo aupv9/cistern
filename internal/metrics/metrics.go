@@ -33,6 +33,8 @@ const (
 	VerifyLastSuccess  = "cistern_verify_last_success_timestamp_seconds"
 	VerifyLastFailure  = "cistern_verify_last_failure_timestamp_seconds"
 	VerifyFailures     = "cistern_verify_failures_total"
+	DrillLastSuccess   = "cistern_drill_last_success_timestamp_seconds"
+	DrillLastFailure   = "cistern_drill_last_failure_timestamp_seconds"
 	BuildInfo          = "cistern_build_info"
 )
 
@@ -51,6 +53,8 @@ var defs = map[string]def{
 	VerifyLastSuccess:  {"gauge", "Unix time of the last successful verify or restore."},
 	VerifyLastFailure:  {"gauge", "Unix time of the last failed verify or restore."},
 	VerifyFailures:     {"counter", "Artifacts that failed verification since this process started."},
+	DrillLastSuccess:   {"gauge", "Unix time the last passed restore drill finished."},
+	DrillLastFailure:   {"gauge", "Unix time of the last failed restore drill."},
 	BuildInfo:          {"gauge", "Cistern build information."},
 }
 
