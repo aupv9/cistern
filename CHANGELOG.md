@@ -6,6 +6,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.5] - 2026-11-04
+
+Proves that backups restore: scheduled restore drills check the restored data and leave evidence in
+the UI, metrics and alerts. Adds prune from the UI, history charts and a read-only configuration
+view.
+
+### Upgrading from 0.4
+
+- No configuration changes are required. Add a `drill` section to the jobs you want drilled (see
+  [docs/drills.md](docs/drills.md)); prune from the UI stays off until `server.prune.enabled: true`.
+
 ### Added
 
 - **Restore drills** (`jobs[].drill`) for PostgreSQL, MySQL/MariaDB and the S3 driver: restore a
@@ -221,7 +232,8 @@ First release: end-to-end PostgreSQL backups to a local repository.
   Slack/Teams/Telegram/JSON webhooks.
 - `cistern keygen`, `cistern check`, `cistern daemon` (HTTP only).
 
-[Unreleased]: https://github.com/aupv9/cistern/compare/v0.4...HEAD
+[Unreleased]: https://github.com/aupv9/cistern/compare/v0.5...HEAD
+[0.5]: https://github.com/aupv9/cistern/compare/v0.4...v0.5
 [0.4]: https://github.com/aupv9/cistern/compare/v0.3...v0.4
 [0.3]: https://github.com/aupv9/cistern/compare/v0.2...v0.3
 [0.2]: https://github.com/aupv9/cistern/compare/v0.1...v0.2
