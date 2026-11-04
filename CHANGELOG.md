@@ -6,6 +6,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.4] - 2026-11-04
+
+Hardens the Admin UI for a pilot: persistent sign-out, rate limits, a separate port for the daemon's
+internal API, Object Lock for approvals and run records, and end-to-end tests against a real identity
+provider. Release archives are now published with every tag.
+
+### Upgrading from 0.3
+
+- Point `server.daemon.url` at the daemon's API port (`http://<daemon>:9465`), not the metrics port.
+- If the server runs behind a reverse proxy, list it in `server.trusted_proxies`.
+
 ### Added
 
 - Rate limits for the Admin UI API (`server.rate_limit`): sign-in 10 per minute per client address,
@@ -176,7 +187,8 @@ First release: end-to-end PostgreSQL backups to a local repository.
   Slack/Teams/Telegram/JSON webhooks.
 - `cistern keygen`, `cistern check`, `cistern daemon` (HTTP only).
 
-[Unreleased]: https://github.com/aupv9/cistern/compare/v0.3...HEAD
+[Unreleased]: https://github.com/aupv9/cistern/compare/v0.4...HEAD
+[0.4]: https://github.com/aupv9/cistern/compare/v0.3...v0.4
 [0.3]: https://github.com/aupv9/cistern/compare/v0.2...v0.3
 [0.2]: https://github.com/aupv9/cistern/compare/v0.1...v0.2
 [0.1]: https://github.com/aupv9/cistern/releases/tag/v0.1
