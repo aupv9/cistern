@@ -360,10 +360,7 @@ func (s *Server) jobDetail(w http.ResponseWriter, rq *request) {
 	det := jobDetail{
 		jobSummary: sum, TimeoutMS: j.Timeout.Milliseconds(), ObjectLock: s.objectLock(j.Repository),
 		Source: safeSource(j.Params), RestoreTargets: []targetView{},
-		Encryption: encryptionView{Mode: "none", Recipients: len(s.cfg.Recipients)},
-	}
-	if len(s.cfg.Recipients) > 0 {
-		det.Encryption.Mode = "age-x25519"
+		Encryption: s.encryptionOf(d),
 	}
 	if j.PruneAfterBackup != nil {
 		det.PruneAfterBackup = *j.PruneAfterBackup
@@ -552,4 +549,30 @@ func (s *Server) liveRuns(ctx context.Context, active bool) []admin.Run {
 		return nil
 	}
 	return runs
+}
+
+func (s *Server) encryptionOf(d *jobData) encryptionView {
+	var newest *manifest.Manifest
+	for _, m := range d.snaps {
+		if newest == nil || m.FinishedAt.After(newest.FinishedAt) {
+			newest = m
+		}
+	}
+	v := encryptionView{Mode: "none"}
+	if newest != nil {
+		v.Recipients = len(newest.Recipients)
+	} else {
+		for _, r := range s.cfg.Encryption.Recipients {
+			if strings.TrimSpace(r) != "" {
+				v.Recipients++
+			}
+		}
+		if v.Recipients == 0 && s.cfg.Encryption.RecipientsFile != "" {
+			v.Mode = "age-x25519"
+		}
+	}
+	if v.Recipients > 0 {
+		v.Mode = "age-x25519"
+	}
+	return v
 }

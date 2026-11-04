@@ -67,6 +67,8 @@ func (a *approvalRecord) expiresAt() time.Time { return a.Request.RequestedAt.Ad
 type approvalStore struct {
 	r      repo.Repository
 	prefix string
+	retain time.Duration
+	now    func() time.Time
 
 	mu      sync.Mutex
 	objects map[string]json.RawMessage
@@ -74,8 +76,8 @@ type approvalStore struct {
 	fetched time.Time
 }
 
-func newApprovalStore(r repo.Repository, prefix string) *approvalStore {
-	return &approvalStore{r: r, prefix: prefix, objects: map[string]json.RawMessage{}}
+func newApprovalStore(r repo.Repository, prefix string, retainDays int) *approvalStore {
+	return &approvalStore{r: r, prefix: prefix, retain: time.Duration(retainDays) * 24 * time.Hour, now: time.Now, objects: map[string]json.RawMessage{}}
 }
 
 func (s *approvalStore) dir() string { return path.Join(s.prefix, admin.Dir, "approvals") }
@@ -92,7 +94,12 @@ func (s *approvalStore) put(ctx context.Context, id, name string, v any) error {
 	key := s.key(id, name)
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := s.r.PutIfAbsent(wctx, key, append(data, '\n')); err != nil {
+	if rt, ok := s.r.(repo.Retainer); ok && rt.LockMode() != "" {
+		err = rt.PutIfAbsentUntil(wctx, key, append(data, '\n'), s.now().Add(s.retain))
+	} else {
+		err = s.r.PutIfAbsent(wctx, key, append(data, '\n'))
+	}
+	if err != nil {
 		if errors.Is(err, repo.ErrExist) {
 			return errDecided
 		}

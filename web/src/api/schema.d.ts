@@ -31,6 +31,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -70,6 +71,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -127,6 +129,7 @@ export interface paths {
                 };
                 404: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -163,6 +166,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         delete?: never;
@@ -207,6 +211,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -243,6 +248,7 @@ export interface paths {
                         "application/json": components["schemas"]["Overview"];
                     };
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -284,6 +290,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -327,6 +334,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -371,6 +379,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -414,6 +423,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -465,6 +475,7 @@ export interface paths {
                 };
                 404: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -510,6 +521,7 @@ export interface paths {
                 403: components["responses"]["Error"];
                 404: components["responses"]["Error"];
                 409: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -562,6 +574,7 @@ export interface paths {
                 404: components["responses"]["Error"];
                 409: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -610,6 +623,7 @@ export interface paths {
                 403: components["responses"]["Error"];
                 404: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         delete?: never;
@@ -670,6 +684,7 @@ export interface paths {
                 404: components["responses"]["Error"];
                 409: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -712,6 +727,7 @@ export interface paths {
                         };
                     };
                 };
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -753,6 +769,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -794,6 +811,7 @@ export interface paths {
                     };
                 };
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -835,6 +853,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -891,6 +910,7 @@ export interface paths {
                 404: components["responses"]["Error"];
                 409: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -941,6 +961,7 @@ export interface paths {
                 403: components["responses"]["Error"];
                 409: components["responses"]["Error"];
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         delete?: never;
@@ -994,6 +1015,7 @@ export interface paths {
                     };
                 };
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
                 503: components["responses"]["Error"];
             };
         };
@@ -1043,6 +1065,7 @@ export interface paths {
                     };
                 };
                 422: components["responses"]["Error"];
+                429: components["responses"]["RateLimited"];
             };
         };
         put?: never;
@@ -1060,7 +1083,7 @@ export interface components {
         Error: {
             error: {
                 /** @enum {string} */
-                code: "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid" | "daemon_unavailable" | "csrf" | "internal";
+                code: "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid" | "daemon_unavailable" | "csrf" | "rate_limited" | "internal";
                 /** @description Safe to show to the user */
                 message: string;
                 /** @description Per-field messages for invalid */
@@ -1197,8 +1220,9 @@ export interface components {
             timeout_ms?: number;
             object_lock?: components["schemas"]["ObjectLock"];
             encryption: {
-                /** @description age-x25519 or none */
+                /** @description age-x25519 or none, from the newest snapshot (from the configuration when the job has none) */
                 mode: string;
+                /** @description Recipients of the newest snapshot; without a snapshot, the recipients listed in encryption.recipients (0 when only recipients_file is set) */
                 recipients: number;
             };
             /** @description Only non-secret parameters (host, port, database, databases, bucket, prefix, endpoint); never passwords or keys */
@@ -1385,6 +1409,17 @@ export interface components {
         /** @description Error */
         Error: {
             headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description rate_limited: too many requests; retry after the number of seconds in Retry-After */
+        RateLimited: {
+            headers: {
+                /** @description Seconds until the next request is allowed */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {

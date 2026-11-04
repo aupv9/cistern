@@ -6,9 +6,7 @@ import (
 	"errors"
 	"io"
 	"mime"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"cistern/internal/admin"
@@ -170,6 +168,9 @@ func (s *Server) api(p perm, h handlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, codeUnauthenticated, "sign in required", nil)
 			return
 		}
+		if !s.limitUser(w, r, sess) {
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if !equalSecret(r.Header.Get(csrfHeader), sess.CSRF) {
 				writeError(w, http.StatusForbidden, codeCSRF, "missing or wrong "+csrfHeader+" header", nil)
@@ -237,19 +238,7 @@ func decodeBody(rq *request, v any) error {
 }
 
 func (s *Server) clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if s.scfg.TLS.Upstream {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if ip := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(ip) != nil {
-				return ip
-			}
-		}
-	}
-	return host
+	return forwardedClient(r.RemoteAddr, r.Header.Values("X-Forwarded-For"), s.scfg.TrustedPrefixes)
 }
 
 func (s *Server) writeAudit(ctx context.Context, rq *request, e *AuditEntry) error {
@@ -275,10 +264,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("GET /api/v1/auth/login", s.login)
-	mux.HandleFunc("GET /api/v1/auth/callback", s.callback)
+	mux.HandleFunc("GET /api/v1/auth/login", s.limitLogin(s.login))
+	mux.HandleFunc("GET /api/v1/auth/callback", s.limitLogin(s.callback))
 	mux.HandleFunc("POST /api/v1/auth/logout", s.api(permAny, s.logout))
-	mux.HandleFunc("GET /api/v1/auth/dev-login", s.devLogin)
+	mux.HandleFunc("GET /api/v1/auth/dev-login", s.limitLogin(s.devLogin))
 	mux.HandleFunc("GET /api/v1/me", s.api(permAny, s.me))
 
 	mux.HandleFunc("GET /api/v1/overview", s.api(permView, s.overview))

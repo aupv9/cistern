@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -11,7 +12,38 @@ import (
 )
 
 type Daemon struct {
-	APIToken string `yaml:"api_token"`
+	APIToken  string    `yaml:"api_token"`
+	APIListen string    `yaml:"api_listen"`
+	APITLS    DaemonTLS `yaml:"api_tls"`
+}
+
+type DaemonTLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+}
+
+const DefaultDaemonAPIListen = ":9465"
+
+func (d *Daemon) normalize(c *Config) []error {
+	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	if d.APIToken != "" && len(d.APIToken) < MinSecretLength {
+		add("daemon.api_token: must be at least %d characters", MinSecretLength)
+	}
+	if d.APIListen == "" && d.APIToken != "" {
+		d.APIListen = DefaultDaemonAPIListen
+	}
+	if d.APIListen != "" {
+		if _, _, err := net.SplitHostPort(d.APIListen); err != nil {
+			add("daemon.api_listen: want host:port, got %q", d.APIListen)
+		} else if d.APIListen == c.Metrics.Listen {
+			add("daemon.api_listen: must differ from metrics.listen (%s); the internal API has its own listener", c.Metrics.Listen)
+		}
+	}
+	if (d.APITLS.CertFile == "") != (d.APITLS.KeyFile == "") {
+		add("daemon.api_tls: cert_file and key_file must be set together")
+	}
+	return errs
 }
 
 type Server struct {
@@ -27,7 +59,23 @@ type Server struct {
 	OIDC               OIDC           `yaml:"oidc"`
 	Roles              []*RoleMapping `yaml:"roles"`
 	Daemon             DaemonClient   `yaml:"daemon"`
+	RateLimit          RateLimit      `yaml:"rate_limit"`
+	TrustedProxies     []string       `yaml:"trusted_proxies"`
+
+	TrustedPrefixes []netip.Prefix `yaml:"-"`
 }
+
+type RateLimit struct {
+	LoginPerMinute *int `yaml:"login_per_minute"`
+	WritePerMinute *int `yaml:"write_per_minute"`
+	ReadPerMinute  *int `yaml:"read_per_minute"`
+}
+
+const (
+	DefaultLoginPerMinute = 10
+	DefaultWritePerMinute = 30
+	DefaultReadPerMinute  = 600
+)
 
 type ServerTLS struct {
 	CertFile string `yaml:"cert_file"`
@@ -51,8 +99,9 @@ type RoleMapping struct {
 }
 
 type DaemonClient struct {
-	URL   string `yaml:"url"`
-	Token string `yaml:"token"`
+	URL    string `yaml:"url"`
+	Token  string `yaml:"token"`
+	CAFile string `yaml:"ca_file"`
 }
 
 const (
@@ -168,7 +217,64 @@ func (s *Server) normalize(c *Config) []error {
 			add("server.daemon.token: must be at least %d characters", MinSecretLength)
 		}
 	}
+	if s.Daemon.CAFile != "" && !strings.HasPrefix(s.Daemon.URL, "https://") {
+		add("server.daemon.ca_file: only used with an https daemon.url")
+	}
+	for _, f := range []struct {
+		name string
+		v    **int
+		def  int
+	}{
+		{"login_per_minute", &s.RateLimit.LoginPerMinute, DefaultLoginPerMinute},
+		{"write_per_minute", &s.RateLimit.WritePerMinute, DefaultWritePerMinute},
+		{"read_per_minute", &s.RateLimit.ReadPerMinute, DefaultReadPerMinute},
+	} {
+		if *f.v == nil {
+			d := f.def
+			*f.v = &d
+		}
+		if n := **f.v; n < 0 || n > 100000 {
+			add("server.rate_limit.%s: must be between 0 (off) and 100000, got %d", f.name, n)
+		}
+	}
+	s.TrustedPrefixes = nil
+	for i, p := range s.TrustedProxies {
+		pfx, err := parsePrefix(p)
+		if err != nil {
+			add("server.trusted_proxies[%d]: want a CIDR or an IP address, got %q", i, p)
+			continue
+		}
+		s.TrustedPrefixes = append(s.TrustedPrefixes, pfx)
+	}
 	return errs
+}
+
+func parsePrefix(s string) (netip.Prefix, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	a = a.Unmap()
+	return netip.PrefixFrom(a, a.BitLen()), nil
+}
+
+func (r RateLimit) Login() int { return derefInt(r.LoginPerMinute, DefaultLoginPerMinute) }
+func (r RateLimit) Write() int { return derefInt(r.WritePerMinute, DefaultWritePerMinute) }
+func (r RateLimit) Read() int  { return derefInt(r.ReadPerMinute, DefaultReadPerMinute) }
+
+func derefInt(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 func IsLoopback(listen string) bool {

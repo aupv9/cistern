@@ -1,0 +1,178 @@
+{
+  "realm": "cistern",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "groups": [
+    {
+      "name": "cistern-viewers",
+      "path": "/cistern-viewers"
+    },
+    {
+      "name": "cistern-dba",
+      "path": "/cistern-dba"
+    },
+    {
+      "name": "cistern-approvers",
+      "path": "/cistern-approvers"
+    },
+    {
+      "name": "cistern-admins",
+      "path": "/cistern-admins"
+    },
+    {
+      "name": "unrelated-team",
+      "path": "/unrelated-team"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "cistern",
+      "name": "Cistern",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "e2e-oidc-client-secret-0123456789abcdef",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "https://127.0.0.1:18443/api/v1/auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-0000000e2e01",
+      "username": "vera",
+      "enabled": true,
+      "email": "vera@example.com",
+      "emailVerified": true,
+      "firstName": "Vera",
+      "lastName": "Viewer",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "vera-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/cistern-viewers"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000e2e02",
+      "username": "dan",
+      "enabled": true,
+      "email": "dan@example.com",
+      "emailVerified": true,
+      "firstName": "Dan",
+      "lastName": "Dba",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dan-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/cistern-dba"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000e2e03",
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Approver",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/cistern-approvers"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000e2e04",
+      "username": "adam",
+      "enabled": true,
+      "email": "adam@example.com",
+      "emailVerified": true,
+      "firstName": "Adam",
+      "lastName": "Admin",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "adam-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/cistern-admins"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000e2e05",
+      "username": "nora",
+      "enabled": true,
+      "email": "nora@example.com",
+      "emailVerified": true,
+      "firstName": "Nora",
+      "lastName": "Nogroup",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nora-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/unrelated-team"
+      ]
+    }
+  ]
+}

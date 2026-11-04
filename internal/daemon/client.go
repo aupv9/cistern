@@ -3,12 +3,15 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -41,6 +44,22 @@ func NewClient(baseURL, token string, hc *http.Client) (*Client, error) {
 		hc = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Client{base: u, token: token, http: hc}, nil
+}
+
+func HTTPClient(caFile string) (*http.Client, error) {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("daemon ca_file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("daemon ca_file %s: no PEM certificates found", caFile)
+		}
+		tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
+	}
+	return &http.Client{Timeout: 10 * time.Second, Transport: tr}, nil
 }
 
 type Status struct {
@@ -92,7 +111,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		case resp.StatusCode == http.StatusUnauthorized:
 			return fmt.Errorf("%w: the daemon rejected the token", ErrUnavailable)
 		case resp.StatusCode == http.StatusNotFound && path != "" && strings.HasPrefix(path, "/internal/") && e.Error.Code == "":
-			return fmt.Errorf("%w: the daemon internal API is not enabled (daemon.api_token)", ErrUnavailable)
+			return fmt.Errorf("%w: no internal API at %s: server.daemon.url must point at the daemon's api_listen (default :9465) and the daemon needs daemon.api_token", ErrUnavailable, c.base.Redacted())
 		case resp.StatusCode >= 500:
 			return fmt.Errorf("%w: %s", ErrUnavailable, ae.Message)
 		}
@@ -109,7 +128,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 
 func (c *Client) Status(ctx context.Context) (*Status, error) {
 	var st Status
-	if err := c.do(ctx, http.MethodGet, "/status", nil, &st); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/status", nil, &st); err != nil {
 		return nil, err
 	}
 	return &st, nil

@@ -11,15 +11,17 @@ backups, verifies and restores, handles approvals for production restores and ke
                                           │  (no private key)              │  (holds the key)
                                           │ read                           │ read/write
                                           ▼                                ▼
-                                   repository: snapshots, _admin/{runs,audit,approvals}
+                                   repository: snapshots, _admin/{runs,audit,approvals,sessions}
 ```
 
 - **The server holds no private key.** It never reads `encryption.identity_file`. It reads the
-  repository (manifests, run records) and writes only audit entries and approval objects.
+  repository (manifests, run records) and writes only audit entries, approval objects and session
+  revocations.
 - **Every operation runs in the daemon.** The server sends backup, verify and restore requests to the
-  daemon's internal API (`POST /internal/v1/runs`) on the daemon's existing listener, authenticated
-  with a bearer token. The daemon runs them through the same engine path as scheduled runs: job
-  lock, metrics, webhooks, run records.
+  daemon's internal API (`POST /internal/v1/runs`) on its own listener (`daemon.api_listen`,
+  `:9465`), separate from the metrics port, authenticated with a bearer token and optionally TLS.
+  The daemon runs them through the same engine path as scheduled runs: job lock, metrics, webhooks,
+  run records.
 - **The UI cannot break schedules.** The daemon does not depend on the server. A stopped server only
   means nobody can use the UI.
 - **Read-only without a daemon.** When `server.daemon` is not configured or the daemon cannot be
@@ -98,6 +100,8 @@ A restore into a production target creates an approval request instead of runnin
 
 - Objects are written with `PutIfAbsent`, so exactly one decision wins when two approvers click at
   the same time; the loser gets `409`.
+- On an S3 repository with `object_lock`, all three objects get a retain-until of
+  `server.audit_retention_days` in the repository's lock mode, like audit entries.
 - A request expires 24 hours after it was made. Expiry is computed; the first read after that records
   an `expired` decision and an `approval.expire` audit entry.
 - On approval the server checks again that the snapshot and target still exist and the job is idle,
@@ -112,7 +116,7 @@ Every write action, sign-in, sign-out and denial creates one entry:
 ```
 
 - Each entry is its own object, written with `PutIfAbsent`. Cistern has no code path that edits or
-  deletes audit entries, and prune never touches `_admin/`.
+  deletes audit entries or approvals; prune only deletes old run records (see below).
 - On an S3 repository with `object_lock`, audit objects get a per-object retain-until of
   `server.audit_retention_days` (default 400, minimum 365) in the repository's lock mode.
 - Each entry is also written to stdout as one JSON line with `"kind": "cistern.audit"`, for a SIEM.
@@ -147,7 +151,13 @@ engine writes a run record:
 
 It holds the run ID, job, operation, status, trigger (`schedule`, `cli`, `ui`), who requested it, the
 approval, snapshot, target, start and end time, duration, stored bytes and error. If writing it fails,
-the failure is logged and the operation keeps its result. The UI builds run history, the 30-run
+the failure is logged and the operation keeps its result. On an S3 repository with `object_lock`,
+run records are locked for the repository's `object_lock.days`, like snapshots.
+
+`cistern prune` (and `prune_after_backup`) deletes run records older than `run_history_days`
+(default 400, per job or in `defaults`; `0` keeps them forever), but always keeps the newest 30
+records of each operation of a job, so the sparkline and "last verify" survive long pauses. A record
+that cannot be deleted yet because of Object Lock is logged at INFO and skipped. The UI builds run history, the 30-run
 sparkline, last failure and the last verify per snapshot from these records; snapshots made before
 run records existed still appear as successful backups.
 
@@ -176,12 +186,15 @@ daemon status for about 5 seconds.
 | Area | Behaviour |
 | --- | --- |
 | Sign-in | OIDC authorization code flow with PKCE (S256), `state` and `nonce` in a short-lived encrypted cookie (`SameSite=Lax`); discovery, JWKS cache refreshed on an unknown key ID; ID tokens signed with RS256 or ES256 only; `iss`, `aud`, `azp`, `exp`, `iat` and `nonce` checked |
-| Session | AES-GCM sealed cookie `__Host-cistern_session` (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`); absolute lifetime `session_ttl` (at most 8 h), idle timeout `idle_timeout` (30 min), re-issued on activity. Logout revokes the session in memory until it would have expired |
+| Session | AES-GCM sealed cookie `__Host-cistern_session` (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`) with a random session ID; absolute lifetime `session_ttl` (at most 8 h), idle timeout `idle_timeout` (30 min), re-issued on activity |
+| Sign-out | `POST /api/v1/auth/logout` writes `_admin/sessions/revoked/<sid>.json` (session ID, subject, revoked and expiry time) to the state repository and rejects the session with `401` from then on. Every server loads the revocations at startup and re-reads them every 30 seconds, so a sign-out survives restarts and reaches all replicas within 30 s. Revocations are never Object-Locked; expired ones are deleted when they are read. If the object cannot be written, the session is revoked on that replica only and the `auth.logout` audit entry says so |
+| Rate limits | In-memory token buckets (`server.rate_limit`): sign-in endpoints (`/auth/login`, `/auth/callback`, `/auth/dev-login`) 10 per minute per client address; non-GET API requests 30 per minute per user; GET API requests 600 per minute per user. Over the limit: `429 rate_limited` with `Retry-After`. Idle buckets are dropped and the number of buckets is capped, so memory stays bounded |
 | CSRF | Every non-GET API request needs `X-Cistern-CSRF` equal to the `csrf_token` from `GET /api/v1/me`; request bodies must be `application/json` |
 | Headers | CSP `default-src 'self'` with `script-src 'self'` plus the SHA-256 hashes of the inline scripts in `_shell.html`, computed at startup (no `unsafe-inline` for scripts; styles allow it), `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, HSTS when TLS is on or `tls.upstream` is set |
-| Client IP | Taken from the connection; `X-Forwarded-For` (right-most entry) only with `tls.upstream: true` |
+| Client IP | Taken from the connection. Only when the connection comes from an address in `server.trusted_proxies` is `X-Forwarded-For` used: the right-most entry that is not itself a trusted proxy |
 | Secrets | Never in responses, audit entries or logs. Job details show only `host`, `port`, `database`, `databases`, `bucket`, `prefix`, `endpoint` (with user info stripped) |
-| Network | `server.listen` defaults to `127.0.0.1:8443`. The daemon API is only enabled with `daemon.api_token` and compares the bearer token in constant time |
+| Network | `server.listen` defaults to `127.0.0.1:8443`. The daemon's internal API has its own listener (`daemon.api_listen`, `:9465`), only exists with `daemon.api_token`, compares the bearer token in constant time and can use TLS (`daemon.api_tls`, verified by the server with `server.daemon.ca_file`). The metrics port (`:9464`) answers `404` for `/internal/*`, so Prometheus access never exposes it; the Kubernetes NetworkPolicy admits only `cistern-server` pods to 9465 |
+| Object Lock | On S3 repositories with `object_lock`: snapshots and run records for `object_lock.days`; audit entries and approval objects (request, decision, run) for `server.audit_retention_days`. Job locks and session revocations are never locked. Local repositories have no Object Lock |
 
 ## Configuration
 
@@ -206,7 +219,8 @@ server:
     - { group: dba, roles: [restorer] }
     - { group: dba-leads, roles: [approver] }
     - { group: platform-admins, roles: [admin] }
-  daemon: { url: "http://cistern:9464", token: "${CISTERN_DAEMON_TOKEN}" }
+  daemon: { url: "http://cistern:9465", token: "${CISTERN_DAEMON_TOKEN}" }
+  trusted_proxies: ["10.0.0.0/8"]   # the ingress controller, so the client address is known
 ```
 
 Register `<public_url>/api/v1/auth/callback` as the redirect URI at the identity provider and make
@@ -217,7 +231,7 @@ process does not use them.
 
 | Process | Tolerates unset variables under |
 | --- | --- |
-| `cistern server` | `jobs[].params`, `jobs[].restore_targets[].set`, `daemon`, `notify` |
+| `cistern server` | `jobs[].params`, `jobs[].restore_targets[].set`, `daemon`, `notify`, `encryption` (the server never encrypts or decrypts and ignores the whole section) |
 | `cistern daemon` | `server` |
 | other commands | `server`, `daemon`, `jobs[].restore_targets[].set` |
 
@@ -230,8 +244,10 @@ in the server and the daemon, otherwise the daemon refuses the restore.
 The UI lives in [web/](../web/) (TanStack Start in SPA mode, built to `web/dist/client/`).
 
 ```sh
-make ui         # npm ci && npm run build in web/ (Node.js 22)
-make build-ui   # go build -tags ui: embeds web/dist/client into bin/cistern
+make ui             # npm ci && npm run build in web/ (Node.js 22)
+make build-ui       # go build -tags ui: embeds web/dist/client into bin/cistern
+make dist           # release archives with the UI embedded, plus SHA256SUMS, in dist/ (needs make ui first)
+make release-notes  # dist/release-notes.md: the CHANGELOG section of the current version
 ```
 
 Without `-tags ui` the binary serves a short page saying the UI was not built; the API works the
@@ -247,8 +263,11 @@ make dev-ui     # or scripts/dev-ui.sh
 One command starts a backend for UI work:
 
 - a `postgres:16` container (the image pinned in `scripts/e2e-local.sh`) that also runs
-  `cistern daemon`, published on `127.0.0.1:8481`;
-- `cistern server --insecure-dev-login` on the host at `http://127.0.0.1:8480`;
+  `cistern daemon`, with its metrics port on `127.0.0.1:8481` and its internal API on
+  `127.0.0.1:8482`;
+- `cistern server --insecure-dev-login` on the host at `http://127.0.0.1:8480`, restarted
+  automatically when it exits (`kill $(cat .dev-ui/server.pid)` restarts it with the variables in
+  `.dev-ui/server.env`); the sign-in limit is raised to 120 per minute;
 - a local repository and logs in `.dev-ui/` (`repo/`, `cistern.yaml`, `server.log`, `daemon.log`,
   `audit.jsonl`);
 - four jobs: `shop-db` (healthy, schedules, a non-production `scratch` target and a `production`
@@ -257,8 +276,13 @@ One command starts a backend for UI work:
   production restore request.
 
 PostgreSQL is used because no driver works without an external service. The script needs Docker,
-Go, `curl` and `jq`. Options: `--no-seed` (no history), `--run CMD` (run `CMD` once the backend is up,
-then stop with its exit status), `DEV_UI_PORT`, `DEV_UI_DAEMON_PORT`, `DEV_UI_DIR`.
+Go, `curl` and `jq`. It bind-mounts `DEV_UI_DIR` into the container, so that directory must be on a
+path Docker can share with its VM: with colima's default setup only `$HOME` is shared, so a
+directory under `/tmp` or `/private/tmp` does not work. Options: `--no-seed` (no history), `--run CMD` (run `CMD` once the backend is up,
+then stop with its exit status), `DEV_UI_PORT`, `DEV_UI_DAEMON_PORT`, `DEV_UI_DAEMON_API_PORT`
+(default `DEV_UI_DAEMON_PORT` + 1), `DEV_UI_DIR`, `DEV_UI_LOGIN_PER_MINUTE` (120),
+`DEV_UI_WRITE_PER_MINUTE` (30). `--run` exports `DEV_UI_BASE`, `DEV_UI_DIR`, `DEV_UI_CONTAINER`,
+`DEV_UI_PG_PASSWORD`, `DEV_UI_METRICS_URL` and `DEV_UI_DAEMON_API_URL` to the command.
 
 Sign in with:
 
@@ -274,5 +298,20 @@ cookie is then `cistern_session` (not `Secure`).
 not set, and the server logs a loud warning at startup. Never use it outside local development.
 
 `scripts/e2e/server.sh` drives the API end to end against this backend (backup, snapshots, restore
-to a non-production target, approval flow, self-approval refused, audit entries, no secrets
-leaked). It runs in CI as the `server` target of `scripts/e2e-local.sh`.
+to a non-production target, approval flow, self-approval refused, audit entries, `/internal/*`
+absent on the metrics port, a signed-out session still refused after a server restart, `429` with
+`Retry-After` over a lowered write limit, no secrets leaked). It runs in CI as the `server` target of
+`scripts/e2e-local.sh`.
+
+### End-to-end tests
+
+| Target | Command | What it covers |
+| --- | --- | --- |
+| `server` | `scripts/e2e-local.sh server` | `scripts/e2e/server.sh` against a `dev-ui.sh` backend (see above) |
+| `oidc` | `make e2e-oidc` or `scripts/e2e-local.sh oidc` | `scripts/e2e/oidc.sh`: a real Keycloak, the authorization code flow with PKCE over TLS, roles from the groups claim, approvals by a second person, sign-out revocation across a server restart, the sign-in rate limit, the internal API only on its own port, audit subjects, no secrets in logs |
+| `ui` | `make e2e-ui` or `scripts/e2e-local.sh ui` | Builds the UI and runs Playwright (`npm run test:e2e:real` in `web/`) against a real `dev-ui.sh` backend |
+
+`scripts/e2e-local.sh server` and `ui` run their backend on ports 18480–18482 (server, daemon
+metrics, daemon API) in a temporary directory under `.e2e-tmp/` in the repository, so they do not
+disturb a `make dev-ui` on 8480–8482. Set `CISTERN_E2E_TMP` to use another directory; it must be
+shareable with Docker, as above.

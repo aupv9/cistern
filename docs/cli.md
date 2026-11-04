@@ -85,6 +85,12 @@ the lock or deleting anything. Prune also removes incomplete snapshots (no manif
 hour. On an S3 repository with Object Lock, deletions create delete markers and locked versions stay
 until their retention expires.
 
+Prune also deletes run records (`_admin/runs/<job>/`) older than `run_history_days` (default 400),
+but always keeps the newest 30 records of each operation; `0` keeps them forever. Unreadable run
+records are kept. A run record that cannot be deleted (for example because of Object Lock) is logged
+and skipped and never fails the prune. The summary line ends with `run records removed N` (`would
+remove` with `--dry-run`); `--json` reports `run_records_removed`.
+
 ## `check`
 
 ```
@@ -103,19 +109,30 @@ version compatible with the server, configured databases present. Prints `job<TA
 cistern daemon [--listen ADDR] [--grace DURATION]
 ```
 
-Runs every job's `schedule` (backup) and `verify_schedule` (verify the newest snapshot) and serves:
+Runs every job's `schedule` (backup) and `verify_schedule` (verify the newest snapshot) and serves
+two listeners. The metrics listener (`--listen`, default `metrics.listen`, `:9464`):
 
 | Path | Content |
 | --- | --- |
 | `/metrics` | Prometheus metrics |
 | `/healthz` | `ok` |
 | `/status` | JSON: jobs, snapshot counts, last success and failure, each scheduled task's next run and last result, running operations (`running`), the scheduler time zone (`timezone`) and whether the internal API is on (`api`) |
-| `/internal/v1/runs` | Only with `daemon.api_token`: `POST` starts a backup, verify or restore for `cistern server` (`202`, or `409` if the job is busy); `GET` lists runs (`?active=true`); `GET /internal/v1/runs/{id}` returns state, progress and the last 200 log lines. Requires `Authorization: Bearer <api_token>` |
 
-`--listen` defaults to `metrics.listen` (`:9464`). Different jobs run in parallel; when a run comes
-due while the previous run of the same job and operation is still going, it is skipped and logged.
-Missed runs are not caught up after a restart. A scheduled run is also skipped while an operation
-started from the Admin UI is running for the same job. The daemon remembers runs for 24 hours. On SIGTERM or SIGINT the daemon stops the HTTP server,
+`/internal/*` answers `404` there. The internal API listener (`daemon.api_listen`, default `:9465`)
+only runs with `daemon.api_token`, optionally over HTTPS (`daemon.api_tls`). Every path except
+`/healthz` requires `Authorization: Bearer <api_token>`:
+
+| Path | Content |
+| --- | --- |
+| `/healthz` | `ok` |
+| `/status` | Same as on the metrics listener |
+| `/internal/v1/runs` | `POST` starts a backup, verify or restore for `cistern server` (`202`, or `409` if the job is busy); `GET` lists runs (`?active=true`) |
+| `/internal/v1/runs/{id}` | State, progress and the last 200 log lines of a run |
+
+Different jobs run in parallel; when a run comes due while the previous run of the same job and
+operation is still going, it is skipped and logged. Missed runs are not caught up after a restart.
+A scheduled run is also skipped while an operation started from the Admin UI is running for the
+same job. The daemon remembers runs for 24 hours. On SIGTERM or SIGINT the daemon stops both listeners,
 waits up to `--grace` (default `5m`) for running jobs, then cancels them.
 
 ## `server`

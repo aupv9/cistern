@@ -30,7 +30,7 @@ Backups are only worth what their restores are worth, so Cistern is built around
 - **Verify and restore**: full verification with the private key, stored-checksum verification without it
 - **GFS retention** (`last`, `hourly`, `daily`, `weekly`, `monthly`, `yearly`) that never drops a snapshot another one depends on
 - **Scheduler daemon** with cron expressions, plus one-shot mode for Kubernetes CronJobs and systemd timers
-- **Admin UI** (`cistern server`): overview, snapshots, run history, backups and restores from the browser with OIDC sign-in, roles, approvals for production restores and an append-only audit log — the UI process never holds the private key
+- **Admin UI** (`cistern server`): overview, snapshots, run history, backups and restores from the browser with OIDC sign-in, roles, approvals for production restores, an append-only audit log, rate limits and server-side sign-out — the UI process never holds the private key
 - **Observability**: Prometheus metrics (scrape, Pushgateway or node_exporter textfile), ready-made alert rules, Slack/Teams/Telegram/JSON webhooks
 - **No dependencies beyond the Go standard library** (a vendored subset of `golang.org/x/crypto` for ChaCha20-Poly1305)
 
@@ -120,7 +120,7 @@ A snapshot is a directory in the repository:
 <prefix>/<job>/<snapshot-id>/manifest.json
 <prefix>/<job>/<snapshot-id>/artifacts/<artifact>.gz.age
 <prefix>/locks/<job>.lock
-<prefix>/_admin/{runs,audit,approvals}/...
+<prefix>/_admin/{runs,audit,approvals,sessions}/...
 ```
 
 The manifest records the source version and host, every artifact with its sizes and checksums, the

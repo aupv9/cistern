@@ -5,6 +5,22 @@ encryption:
   identity_file: /etc/cistern-keys/identity.txt
 scheduler:
   timezone: Asia/Ho_Chi_Minh
+daemon:
+  api_token: ${CISTERN_DAEMON_TOKEN}
+server:
+  name: e2e
+  listen: ":8443"
+  public_url: https://cistern.e2e.invalid
+  tls: { upstream: true }
+  session_key: ${CISTERN_SESSION_KEY}
+  state_repository: local
+  oidc:
+    issuer: https://sso.e2e.invalid/realms/e2e
+    client_id: cistern
+    client_secret: ${CISTERN_OIDC_CLIENT_SECRET}
+  roles:
+    - { group: backup-viewers, roles: [viewer] }
+  daemon: { url: "http://cistern:9465", token: "${CISTERN_DAEMON_TOKEN}" }
 jobs:
   - name: app
     driver: postgres

@@ -37,9 +37,11 @@ defaults:
   timeout: 6h
   retention: { last: 3, daily: 7, weekly: 4, monthly: 6 }
   prune_after_backup: true
+  run_history_days: 400
 
 daemon:
   api_token: ${CISTERN_DAEMON_TOKEN}
+  api_listen: ":9465"
 
 server:
   name: production
@@ -58,8 +60,10 @@ server:
     - { group: dba-leads, roles: [approver] }
     - { group: platform-admins, roles: [admin] }
   daemon:
-    url: http://cistern:9464
+    url: http://cistern:9465
     token: ${CISTERN_DAEMON_TOKEN}
+  rate_limit: { login_per_minute: 10, write_per_minute: 30, read_per_minute: 600 }
+  trusted_proxies: ["10.0.0.0/8"]
 
 jobs:
   - name: orders-db

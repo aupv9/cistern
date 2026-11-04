@@ -10,6 +10,12 @@ info:
     The session cookie is `__Host-cistern_session`; with `--insecure-dev-login` it is `cistern_session`.
     Times are RFC 3339 in UTC. Sizes are bytes. Durations are milliseconds.
     Secrets (passwords, S3 credentials, private keys, tokens) never appear in any response.
+    Sessions end at sign-out: `POST /auth/logout` revokes the session on every server replica (within
+    30 seconds) and across restarts; a revoked session gets 401 `unauthenticated`.
+    Rate limits (`server.rate_limit`, token buckets per minute): `/auth/login`, `/auth/callback` and
+    `/auth/dev-login` per client address (default 10), other non-GET requests per user (default 30),
+    GET requests per user (default 600). Exceeding a limit answers 429 `rate_limited` with a
+    `Retry-After` header in seconds.
 servers:
   - url: /api/v1
 security:
@@ -31,6 +37,7 @@ paths:
         - { name: return_to, in: query, required: false, schema: { type: string }, description: "Path inside the UI to return to, must start with /" }
       responses:
         "302": { description: "Redirect to the identity provider, or to /denied?reason=idp_unavailable|sso_not_configured" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /auth/callback:
     get:
       tags: [auth]
@@ -42,6 +49,7 @@ paths:
         audited as auth.denied), `login_failed`, `login_expired` or `idp_unavailable`.
       responses:
         "302": { description: "Redirect into the UI, or to /denied?reason=..." }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /auth/dev-login:
     get:
       tags: [auth]
@@ -61,12 +69,14 @@ paths:
         "302": { description: Signed in, redirect to return_to }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /auth/logout:
     post:
       tags: [auth]
       summary: End the session
       responses:
         "204": { description: Signed out }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /me:
     get:
       tags: [auth]
@@ -79,6 +89,7 @@ paths:
         "403":
           description: "forbidden: signed in, but the user has no role; the UI shows /denied"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /overview:
     get:
       tags: [jobs]
@@ -87,6 +98,7 @@ paths:
         "200":
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/Overview" } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     get:
@@ -97,6 +109,7 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/JobDetail" } } }
         "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/snapshots:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     get:
@@ -110,6 +123,7 @@ paths:
               schema: { type: object, required: [snapshots], properties: { snapshots: { type: array, items: { $ref: "#/components/schemas/SnapshotSummary" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/snapshots/{snapshot}:
     parameters:
       - { $ref: "#/components/parameters/Job" }
@@ -122,6 +136,7 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/Manifest" } } }
         "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/snapshots/{snapshot}/manifest.json:
     parameters:
       - { $ref: "#/components/parameters/Job" }
@@ -135,6 +150,7 @@ paths:
           content: { application/json: {} }
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/runs:
     parameters:
       - { $ref: "#/components/parameters/Job" }
@@ -151,6 +167,7 @@ paths:
               schema: { type: object, required: [runs], properties: { runs: { type: array, items: { $ref: "#/components/schemas/Run" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/backup:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     post:
@@ -164,6 +181,7 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/verify:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     post:
@@ -182,6 +200,7 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/restore/preview:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     post:
@@ -197,6 +216,7 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /jobs/{job}/restore:
     parameters: [{ $ref: "#/components/parameters/Job" }]
     post:
@@ -234,6 +254,7 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /runs:
     get:
       tags: [runs]
@@ -247,6 +268,7 @@ paths:
           content:
             application/json:
               schema: { type: object, required: [runs], properties: { runs: { type: array, items: { $ref: "#/components/schemas/Run" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /runs/{run}:
     parameters: [{ name: run, in: path, required: true, schema: { type: string } }]
     get:
@@ -257,6 +279,7 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } }
         "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /approvals:
     get:
       tags: [approvals]
@@ -271,6 +294,7 @@ paths:
               schema: { type: object, required: [approvals], properties: { approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } } } }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /approvals/{approval}:
     parameters: [{ $ref: "#/components/parameters/Approval" }]
     get:
@@ -280,6 +304,7 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } }
         "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /approvals/{approval}/approve:
     parameters: [{ $ref: "#/components/parameters/Approval" }]
     post:
@@ -301,6 +326,7 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /approvals/{approval}/reject:
     parameters: [{ $ref: "#/components/parameters/Approval" }]
     post:
@@ -318,6 +344,7 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /audit:
     get:
       tags: [audit]
@@ -345,6 +372,7 @@ paths:
                   total: { type: integer, description: "Entries matching the filters; only on the first page (no cursor) and only up to 10000, otherwise absent" }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /audit/export:
     get:
       tags: [audit]
@@ -364,6 +392,7 @@ paths:
             text/csv: {}
             application/x-ndjson: {}
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 components:
   securitySchemes:
     session: { type: apiKey, in: cookie, name: __Host-cistern_session }
@@ -373,6 +402,11 @@ components:
   responses:
     Error:
       description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: "rate_limited: too many requests; retry after the number of seconds in Retry-After"
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 }, description: Seconds until the next request is allowed }
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
   schemas:
     Error:
@@ -385,7 +419,7 @@ components:
           properties:
             code:
               type: string
-              enum: [unauthenticated, forbidden, not_found, conflict, invalid, daemon_unavailable, csrf, internal]
+              enum: [unauthenticated, forbidden, not_found, conflict, invalid, daemon_unavailable, csrf, rate_limited, internal]
             message: { type: string, description: "Safe to show to the user" }
             fields: { type: object, additionalProperties: { type: string }, description: "Per-field messages for invalid" }
     Role:
@@ -526,8 +560,8 @@ components:
               type: object
               required: [mode, recipients]
               properties:
-                mode: { type: string, description: "age-x25519 or none" }
-                recipients: { type: integer }
+                mode: { type: string, description: "age-x25519 or none, from the newest snapshot (from the configuration when the job has none)" }
+                recipients: { type: integer, description: "Recipients of the newest snapshot; without a snapshot, the recipients listed in encryption.recipients (0 when only recipients_file is set)" }
             source:
               type: object
               description: "Only non-secret parameters (host, port, database, databases, bucket, prefix, endpoint); never passwords or keys"

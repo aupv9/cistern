@@ -119,6 +119,69 @@ api victor GET "/audit/export?format=csv"
 expect 200 "csv export"
 [ "$(find "$DEV_UI_DIR/repo/_admin/audit" -type f | wc -l)" -ge 10 ] || fail "audit objects missing in the repository"
 
+step "the internal API is only on the API port"
+: "${DEV_UI_METRICS_URL:?}" "${DEV_UI_DAEMON_API_URL:?}"
+for path in /internal/v1/runs /internal/v1/runs/20260101T000000Z-abcdef01; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "$DEV_UI_METRICS_URL$path")
+  [ "$code" = 404 ] || fail "$path on the metrics port: HTTP $code, want 404"
+done
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"op":"backup","job":"shop-db"}' "$DEV_UI_METRICS_URL/internal/v1/runs")
+[ "$code" = 404 ] || fail "POST /internal/v1/runs on the metrics port: HTTP $code, want 404"
+curl -fs "$DEV_UI_METRICS_URL/metrics" | grep -q '^cistern_' || fail "metrics missing on the metrics port"
+code=$(curl -s -o /dev/null -w '%{http_code}' "$DEV_UI_DAEMON_API_URL/internal/v1/runs")
+[ "$code" = 401 ] || fail "/internal/v1/runs without a token on the API port: HTTP $code, want 401"
+echo "metrics port: /internal 404; API port: token required"
+
+restart_server() {
+  local old
+  old=$(cat "$DEV_UI_DIR/server.pid")
+  kill "$old"
+  for _ in $(seq 1 100); do
+    [ "$(cat "$DEV_UI_DIR/server.pid")" != "$old" ] && curl -fs -o /dev/null "$BASE/healthz" && return 0
+    sleep 0.2
+  done
+  fail "the server did not come back after a restart"
+}
+
+step "a logged-out session stays revoked after a server restart"
+login lena viewer
+cp "$JARS/lena" "$JARS/lena.saved"
+api lena GET /me
+expect 200 "me before logout"
+api lena POST /auth/logout
+expect 204 "logout"
+cp "$JARS/lena.saved" "$JARS/lena"
+api lena GET /me
+expect 401 "logged-out session"
+ls "$DEV_UI_DIR/repo/_admin/sessions/revoked/"*.json >/dev/null 2>&1 || fail "no revocation object in the repository"
+echo "WRITE_PER_MINUTE=3" > "$DEV_UI_DIR/server.env"
+restart_server
+cp "$JARS/lena.saved" "$JARS/lena"
+api lena GET /me
+expect 401 "logged-out session after a restart"
+echo "revoked session rejected after the restart"
+
+step "write rate limit"
+login wanda restorer
+for i in 1 2 3; do
+  api wanda POST /jobs/shop-db/restore/preview '{"snapshot":"latest","target":"scratch"}'
+  expect 200 "preview $i"
+done
+HDRS=$JARS/headers
+CODE=$(curl -sS -o "$JARS/body" -D "$HDRS" -w '%{http_code}' -b "$JARS/wanda" -X POST \
+  -H "X-Cistern-CSRF: $(cat "$JARS/wanda.csrf")" -H 'Content-Type: application/json' \
+  -d '{"snapshot":"latest","target":"scratch"}' "$BASE/api/v1/jobs/shop-db/restore/preview")
+BODY=$(cat "$JARS/body")
+expect 429 "fourth write"
+[ "$(jq -r .error.code <<<"$BODY")" = rate_limited ] || fail "429 body: $BODY"
+RETRY=$(tr -d '\r' < "$HDRS" | awk -F': ' 'tolower($1) == "retry-after" { print $2 }')
+[ -n "$RETRY" ] && [ "$RETRY" -ge 1 ] || fail "no Retry-After header"
+echo "429 rate_limited, Retry-After: $RETRY s"
+api rita POST /jobs/shop-db/restore/preview '{"snapshot":"latest","target":"scratch"}'
+expect 200 "another user is not limited"
+: > "$DEV_UI_DIR/server.env"
+restart_server
+
 step "no secrets in responses, audit or logs"
 if grep -rq "$DEV_UI_PG_PASSWORD" "$DEV_UI_DIR/repo/_admin" "$DEV_UI_DIR/audit.jsonl" "$DEV_UI_DIR/server.log" "$JARS"; then
   fail "database password found"

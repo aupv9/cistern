@@ -12,13 +12,16 @@ AWS_CLI_IMAGE=${AWS_CLI_IMAGE:-amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd310
 MINIO_USER=e2eadmin
 MINIO_PASS=e2e-minio-secret
 ID=cistern-e2e-$$
+TMP_BASE=${CISTERN_E2E_TMP:-$ROOT/.e2e-tmp}
 WORK=$(mktemp -d)
+SHARED=""
 
 cleanup() {
   docker rm -f -v "$ID-pg" "$ID-minio" "$ID-mysql" "$ID-tools" "$ID-ipg" "$ID-imysql" "$ID-imaria" >/dev/null 2>&1 || true
   docker volume rm "$ID-data" >/dev/null 2>&1 || true
   docker network rm "$ID" >/dev/null 2>&1 || true
   rm -rf "$WORK"
+  [ -z "$SHARED" ] || rm -rf "$SHARED"
 }
 trap cleanup EXIT
 step() { echo; echo "==> $*"; }
@@ -200,6 +203,23 @@ YAML
   echo; echo "E2E IMAGE: PASS"
 }
 
+dev_ui() {
+  if [ -z "${DEV_UI_DIR:-}" ] && [ -z "$SHARED" ]; then
+    mkdir -p "$TMP_BASE"
+    SHARED=$(mktemp -d "$TMP_BASE/dev-ui.XXXXXX")
+    SHARED=$(cd "$SHARED" && pwd -P)
+  fi
+  DEV_UI_PORT=${DEV_UI_PORT:-18480} DEV_UI_DAEMON_PORT=${DEV_UI_DAEMON_PORT:-18481} DEV_UI_DIR=${DEV_UI_DIR:-$SHARED/dev-ui} \
+    "$ROOT/scripts/dev-ui.sh" "$@"
+}
+
+run_ui() {
+  step "build the UI and run Playwright against a real backend"
+  (cd "$ROOT/web" && { [ -d node_modules ] || npm ci; } && npm run build)
+  dev_ui --run "cd '$ROOT/web' && npx playwright test -c playwright.real.config.ts"
+  echo; echo "E2E UI: PASS"
+}
+
 for t in $TARGETS; do
   case $t in
     postgres) start_pg; inner postgres.sh ;;
@@ -208,7 +228,9 @@ for t in $TARGETS; do
     mariadb) start_mysql "$MARIADB_IMAGE" mariadb ;;
     s3-driver) run_s3_driver ;;
     image) run_image ;;
-    server) "$ROOT/scripts/dev-ui.sh" --no-seed --run "$ROOT/scripts/e2e/server.sh" ;;
-    *) fail "unknown target $t (postgres | s3 | mysql | mariadb | s3-driver | image | server)" ;;
+    server) dev_ui --no-seed --run "$ROOT/scripts/e2e/server.sh" ;;
+    oidc) "$ROOT/scripts/e2e/oidc.sh" ;;
+    ui) run_ui ;;
+    *) fail "unknown target $t (postgres | s3 | mysql | mariadb | s3-driver | image | server | oidc | ui)" ;;
   esac
 done

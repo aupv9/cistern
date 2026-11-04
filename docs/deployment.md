@@ -62,7 +62,7 @@ MariaDB with it, as UID 10001 on a read-only root filesystem.
 
 | Directory | Contents |
 | --- | --- |
-| `base` | Daemon: Deployment (1 replica, `Recreate`), Service `cistern:9464`, NetworkPolicy (inbound only to 9464), ServiceAccount without a token |
+| `base` | Daemon: Deployment (1 replica, `Recreate`), Service `cistern` with ports `metrics` (9464) and `api` (9465), NetworkPolicy (9464 from anywhere for scrapers, 9465 only from `cistern-server` pods), ServiceAccount without a token |
 | `cronjob` | One-shot mode: CronJobs `cistern-backup` (`backup --all`) and `cistern-prune` (`prune --all`, separate credentials) |
 | `monitoring` | `PrometheusRule` with the alerts from [Observability](observability.md) (requires the Prometheus Operator) |
 | `server` | Admin UI: Deployment `cistern-server` (no keys secret), Service `cistern-server:8443`, NetworkPolicy, ServiceAccount without a token |
@@ -81,7 +81,7 @@ The manifests expect these objects, which you create:
 | Secret `cistern-keys` (daemon only, optional) | `identity.txt` | `/etc/cistern-keys/identity.txt` |
 | Secret `cistern-prune-env` (prune CronJob) | environment for prune, with repository credentials allowed to delete | environment |
 | Secret `cistern-daemon-token` (with the Admin UI) | key `token`: the shared daemon API token, at least 32 characters | `CISTERN_DAEMON_TOKEN` in the daemon (optional) and the server |
-| Secret `cistern-server-env` (Admin UI) | `CISTERN_SESSION_KEY`, the OIDC client secret and the repository credentials the server needs | environment of the server |
+| Secret `cistern-server-env` (Admin UI) | `CISTERN_SESSION_KEY`, the OIDC client secret and the repository credentials the server needs; not `CISTERN_RECIPIENT`, since the server ignores `encryption` | environment of the server |
 
 A minimal overlay:
 
@@ -134,7 +134,8 @@ server:
   public_url: https://backup.example.com
   tls: { upstream: true }
   session_key: ${CISTERN_SESSION_KEY}
-  daemon: { url: "http://cistern:9464", token: "${CISTERN_DAEMON_TOKEN}" }
+  daemon: { url: "http://cistern:9465", token: "${CISTERN_DAEMON_TOKEN}" }
+  trusted_proxies: ["10.0.0.0/8"]   # the ingress controller's pod network
 ```
 
 ```sh
@@ -146,9 +147,25 @@ kubectl -n backup create secret generic cistern-server-env \
 
 Add `deploy/k8s/server` to your overlay next to `base` and route an Ingress to Service
 `cistern-server` port `8443`. The NetworkPolicy only admits traffic from the `ingress-nginx`
-namespace; patch it for your ingress controller. The server reaches the daemon on `cistern:9464`,
-the repository and the identity provider. The daemon API on port 9464 is only enabled when the
-token is set, and checks it on every request. Restart the daemon after creating the token Secret.
+namespace; patch it for your ingress controller. The server reaches the daemon on `cistern:9465`,
+the repository and the identity provider.
+
+The daemon serves two listeners. Port 9464 (`metrics`) has `/metrics`, `/healthz` and `/status`
+and stays open to Prometheus. Port 9465 (`api`, `daemon.api_listen`) has the internal run API; it
+only listens when `daemon.api_token` is set, checks the token on every request, and the base
+NetworkPolicy only admits pods labeled `app.kubernetes.io/name: cistern-server` to it. The
+container always declares port 9465; restart the daemon after creating the token Secret. To
+encrypt the hop, set `daemon.api_tls` (`cert_file`, `key_file`, for example from a cert-manager
+Secret mounted into the daemon), use an `https://` `server.daemon.url` and point
+`server.daemon.ca_file` at the issuing CA.
+
+Set `server.trusted_proxies` to the addresses of your ingress controller pods. Only then does the
+server take the client address from `X-Forwarded-For`, which the sign-in rate limit and the audit
+log use; without it every request appears to come from the ingress controller and shares one
+sign-in budget.
+
+With more than one server replica, all replicas must share `server.session_key` and the state
+repository. Sign-outs reach the other replicas within 30 seconds.
 
 `make e2e-k8s` (or `scripts/e2e-k8s.sh`) creates a throwaway k3d cluster, deploys `base` and
 `cronjob` with PostgreSQL, and checks the pod hardening, scheduled backups and verifies, metrics,

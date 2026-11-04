@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PG_IMAGE=${PG_IMAGE:-postgres:16.15@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a}
 PORT=${DEV_UI_PORT:-8480}
 DAEMON_PORT=${DEV_UI_DAEMON_PORT:-8481}
+DAEMON_API_PORT=${DEV_UI_DAEMON_API_PORT:-$((DAEMON_PORT + 1))}
 DIR=${DEV_UI_DIR:-$ROOT/.dev-ui}
 SEED=1
 RUN=""
@@ -19,13 +20,22 @@ done
 
 NAME=cistern-dev-ui-$$
 BASE=http://127.0.0.1:$PORT
-SERVER_PID=""
+SUPERVISOR_PID=""
 PG_PASSWORD=dev-ui-postgres-password
 SESSION_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 DAEMON_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 cleanup() {
-  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null || true
+  if [ -n "$SUPERVISOR_PID" ]; then
+    touch "$DIR/server.stop"
+    kill "$SUPERVISOR_PID" 2>/dev/null || true
+    wait "$SUPERVISOR_PID" 2>/dev/null || true
+    if [ -f "$DIR/server.pid" ]; then
+      pid=$(cat "$DIR/server.pid")
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    fi
+  fi
   docker rm -f -v "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -59,10 +69,12 @@ defaults:
   prune_after_backup: true
 daemon:
   api_token: ${DAEMON_TOKEN:-}
+  api_listen: ":9465"
 server:
   name: development
   session_key: ${SESSION_KEY:-}
-  daemon: { url: "http://127.0.0.1:${DAEMON_PORT}", token: "${DAEMON_TOKEN:-}" }
+  daemon: { url: "http://127.0.0.1:${DAEMON_API_PORT}", token: "${DAEMON_TOKEN:-}" }
+  rate_limit: { login_per_minute: "${LOGIN_PER_MINUTE:-120}", write_per_minute: "${WRITE_PER_MINUTE:-30}" }
 jobs:
   - name: shop-db
     driver: postgres
@@ -88,7 +100,7 @@ YAML
 
 step "start $PG_IMAGE with the daemon"
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD="$PG_PASSWORD" -v "$DIR:/dev-ui" \
-  -p "127.0.0.1:$DAEMON_PORT:9464" "$PG_IMAGE" >/dev/null
+  -p "127.0.0.1:$DAEMON_PORT:9464" -p "127.0.0.1:$DAEMON_API_PORT:9465" "$PG_IMAGE" >/dev/null
 for _ in $(seq 1 60); do
   docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres && break
   sleep 1
@@ -143,17 +155,36 @@ if [ "$SEED" = 1 ]; then
   in_container cistern verify --job shop-db >/dev/null
 fi
 
-step "start cistern daemon (in the container) on 127.0.0.1:$DAEMON_PORT"
+step "start cistern daemon (in the container): metrics on 127.0.0.1:$DAEMON_PORT, API on 127.0.0.1:$DAEMON_API_PORT"
 docker exec -d -u "$(id -u):$(id -g)" -e HOME=/tmp -e CISTERN_TMPDIR=/tmp -e DEV_DIR=/dev-ui -e PGPASSWORD="$PG_PASSWORD" \
   -e DAEMON_TOKEN="$DAEMON_TOKEN" "$NAME" sh -c 'exec cistern daemon -c /dev-ui/cistern.yaml --listen :9464 --grace 10s > /dev-ui/daemon.log 2>&1'
 for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:$DAEMON_PORT/healthz" >/dev/null && break; sleep 0.2; done
 curl -fs "http://127.0.0.1:$DAEMON_PORT/healthz" >/dev/null || { cat "$DIR/daemon.log"; fail "daemon did not start"; }
+for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:$DAEMON_API_PORT/healthz" >/dev/null && break; sleep 0.2; done
+curl -fs "http://127.0.0.1:$DAEMON_API_PORT/healthz" >/dev/null || { cat "$DIR/daemon.log"; fail "daemon API did not start"; }
 
 step "start cistern server on $BASE"
-DEV_DIR=$DIR SESSION_KEY=$SESSION_KEY DAEMON_TOKEN=$DAEMON_TOKEN DAEMON_PORT=$DAEMON_PORT \
-  "$DIR/bin/cistern" server -c "$DIR/cistern.yaml" --listen "127.0.0.1:$PORT" --insecure-dev-login \
-  > "$DIR/audit.jsonl" 2> "$DIR/server.log" &
-SERVER_PID=$!
+: > "$DIR/server.env"
+: > "$DIR/audit.jsonl"
+: > "$DIR/server.log"
+rm -f "$DIR/server.stop" "$DIR/server.pid"
+supervise() {
+  while [ ! -f "$DIR/server.stop" ]; do
+    (
+      set -a
+      DEV_DIR=$DIR SESSION_KEY=$SESSION_KEY DAEMON_TOKEN=$DAEMON_TOKEN DAEMON_API_PORT=$DAEMON_API_PORT
+      LOGIN_PER_MINUTE=${DEV_UI_LOGIN_PER_MINUTE:-120} WRITE_PER_MINUTE=${DEV_UI_WRITE_PER_MINUTE:-30}
+      . "$DIR/server.env"
+      set +a
+      exec "$DIR/bin/cistern" server -c "$DIR/cistern.yaml" --listen "127.0.0.1:$PORT" --insecure-dev-login
+    ) >> "$DIR/audit.jsonl" 2>> "$DIR/server.log" &
+    echo $! > "$DIR/server.pid"
+    wait $! || true
+    sleep 0.2
+  done
+}
+supervise &
+SUPERVISOR_PID=$!
 for _ in $(seq 1 50); do curl -fs -o /dev/null "$BASE/" && break; sleep 0.2; done
 curl -fs -o /dev/null "$BASE/" || { cat "$DIR/server.log"; fail "server did not start"; }
 
@@ -176,14 +207,16 @@ Cistern dev backend is running.
   UI and API      $BASE  (API under $BASE/api/v1)
   Dev login       $BASE/api/v1/auth/dev-login?email=you@example.com&name=You&roles=admin&return_to=/
                   roles: any of viewer,operator,restorer,approver,admin (comma separated)
-  Daemon          http://127.0.0.1:$DAEMON_PORT/status
+  Daemon          http://127.0.0.1:$DAEMON_PORT/status (metrics port; internal API on 127.0.0.1:$DAEMON_API_PORT)
   Files           $DIR (repo/, cistern.yaml, server.log, daemon.log, audit.jsonl)
+  Restart server  kill \$(cat $DIR/server.pid)   (restarted with the variables in $DIR/server.env)
   Postgres        docker exec -it $NAME psql -U postgres shop
 
 Press Ctrl-C to stop.
 EOF
 
 export DEV_UI_BASE=$BASE DEV_UI_CONTAINER=$NAME DEV_UI_DIR=$DIR DEV_UI_PG_PASSWORD=$PG_PASSWORD
+export DEV_UI_METRICS_URL=http://127.0.0.1:$DAEMON_PORT DEV_UI_DAEMON_API_URL=http://127.0.0.1:$DAEMON_API_PORT
 if [ -n "$RUN" ]; then
   set +e
   bash -c "$RUN"
@@ -191,4 +224,4 @@ if [ -n "$RUN" ]; then
   [ $status = 0 ] || { echo "--- server.log"; tail -50 "$DIR/server.log"; echo "--- daemon.log"; tail -50 "$DIR/daemon.log"; }
   exit $status
 fi
-wait "$SERVER_PID"
+wait "$SUPERVISOR_PID"

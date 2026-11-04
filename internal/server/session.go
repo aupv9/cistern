@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sync"
 	"time"
 
 	"cistern/internal/server/oidc"
@@ -114,31 +113,4 @@ func (c cookieNames) set(w http.ResponseWriter, name, value string, maxAge time.
 		ck.MaxAge = int(maxAge / time.Second)
 	}
 	http.SetCookie(w, ck)
-}
-
-type revocations struct {
-	mu sync.Mutex
-	m  map[string]time.Time
-}
-
-func (r *revocations) add(id string, until time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.m == nil {
-		r.m = map[string]time.Time{}
-	}
-	now := time.Now()
-	for k, t := range r.m {
-		if now.After(t) {
-			delete(r.m, k)
-		}
-	}
-	r.m[id] = until
-}
-
-func (r *revocations) has(id string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, ok := r.m[id]
-	return ok
 }

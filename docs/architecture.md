@@ -41,11 +41,12 @@ reported through metrics and webhooks.
 <prefix>/_admin/runs/<job>/<run-id>.json
 <prefix>/_admin/audit/YYYY/MM/DD/<time>-<rand>.json
 <prefix>/_admin/approvals/<id>/{request,decision,run}.json
+<prefix>/_admin/sessions/revoked/<session-id>.json
 ```
 
-- **`_admin/`** holds run records (written after every operation), and the audit log and approvals of
-  the [Admin UI](admin-ui.md). Job names cannot start with `_`, so it never clashes with a job; prune
-  never touches it.
+- **`_admin/`** holds run records (written after every operation), and the audit log, approvals and
+  session revocations of the [Admin UI](admin-ui.md). Job names cannot start with `_`, so it never
+  clashes with a job. Prune only deletes run records older than `run_history_days` there.
 - **Snapshot ID**: `YYYYMMDDTHHMMSSZ-xxxx` (UTC start time and 4 random hex digits).
 - **Job name**: `[a-z0-9][a-z0-9._-]{0,62}`, not `locks`.
 - **Artifact name**: `/`-separated segments of `[A-Za-z0-9._@=+-]`, no `.` or `..` segments.

@@ -19,6 +19,12 @@
       "Effect": "Allow",
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::BUCKET/PREFIX/locks/*"
+    },
+    {
+      "Sid": "WriteRunRecords",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:PutObjectRetention"],
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/_admin/runs/*"
     }
   ]
 }

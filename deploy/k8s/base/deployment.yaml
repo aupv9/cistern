@@ -29,6 +29,8 @@ spec:
           ports:
             - name: metrics
               containerPort: 9464
+            - name: api
+              containerPort: 9465
           envFrom:
             - secretRef:
                 name: cistern-env

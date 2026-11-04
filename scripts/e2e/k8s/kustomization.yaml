@@ -4,6 +4,7 @@ namespace: cistern-e2e
 resources:
   - ../../../deploy/k8s/base
   - ../../../deploy/k8s/cronjob
+  - ../../../deploy/k8s/server
   - postgres.yaml
   - pvc.yaml
 configMapGenerator:
@@ -16,6 +17,17 @@ images:
     newTag: dev
 patches:
   - target: { kind: Deployment, name: cistern }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: { name: repo, persistentVolumeClaim: { claimName: cistern-repo } }
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: { name: repo, mountPath: /data }
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+  - target: { kind: Deployment, name: cistern-server }
     patch: |-
       - op: add
         path: /spec/template/spec/volumes/-

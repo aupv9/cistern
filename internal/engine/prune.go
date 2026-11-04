@@ -6,6 +6,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cistern/internal/admin"
@@ -34,12 +35,13 @@ type PruneItem struct {
 }
 
 type PruneReport struct {
-	Job     string      `json:"job"`
-	DryRun  bool        `json:"dry_run"`
-	Items   []PruneItem `json:"items"`
-	Kept    int         `json:"kept"`
-	Removed int         `json:"removed"`
-	Errors  int         `json:"errors"`
+	Job               string      `json:"job"`
+	DryRun            bool        `json:"dry_run"`
+	Items             []PruneItem `json:"items"`
+	Kept              int         `json:"kept"`
+	Removed           int         `json:"removed"`
+	Errors            int         `json:"errors"`
+	RunRecordsRemoved int         `json:"run_records_removed"`
 }
 
 func (e *Engine) Prune(ctx context.Context, jobName string, dryRun bool) (*PruneReport, error) {
@@ -189,7 +191,100 @@ func (e *Engine) prune(ctx context.Context, r repo.Repository, prefix string, jo
 		e.Metrics.Set(metrics.Snapshots, l, float64(len(manifests)-rep.Removed))
 		e.Metrics.Add(metrics.PruneRemoved, l, float64(rep.Removed))
 	}
+	rep.RunRecordsRemoved = e.pruneRunRecords(ctx, r, prefix, job, dryRun)
 	return rep, nil
+}
+
+func (e *Engine) pruneRunRecords(ctx context.Context, r repo.Repository, prefix string, job *config.Job, dryRun bool) int {
+	log := e.logger(ctx).With("job", job.Name)
+	days := config.DefaultRunHistoryDays
+	if job.RunHistoryDays != nil {
+		days = *job.RunHistoryDays
+	}
+	if days <= 0 {
+		return 0
+	}
+	keys, err := admin.RecordKeys(ctx, r, prefix, job.Name)
+	if err != nil {
+		log.Warn("listing run records failed", "err", err)
+		return 0
+	}
+	cutoff := e.now().Add(-time.Duration(days) * 24 * time.Hour)
+	dir := admin.RunsDir(prefix, job.Name) + "/"
+	old := false
+	for _, k := range keys {
+		if t, ok := admin.IDTime(strings.TrimPrefix(k, dir)); ok && t.Before(cutoff) {
+			old = true
+			break
+		}
+	}
+	if !old {
+		return 0
+	}
+	ops := readRecordOps(ctx, r, keys)
+	seen := map[string]int{}
+	var remove []string
+	for i := len(keys) - 1; i >= 0; i-- {
+		op := ops[i]
+		if op == "" {
+			continue
+		}
+		seen[op]++
+		t, ok := admin.IDTime(strings.TrimPrefix(keys[i], dir))
+		if ok && t.Before(cutoff) && seen[op] > config.MinRunHistoryKeep {
+			remove = append(remove, keys[i])
+		}
+	}
+	if dryRun {
+		return len(remove)
+	}
+	locked := false
+	if rt, ok := r.(repo.Retainer); ok && rt.LockMode() != "" {
+		locked = true
+	}
+	removed := 0
+	for _, k := range remove {
+		if err := r.Delete(ctx, k); err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			if locked {
+				log.Info("run record kept: deleting it failed, it is probably still under Object Lock retention", "key", k, "err", err)
+			} else {
+				log.Warn("deleting a run record failed", "key", k, "err", err)
+			}
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		log.Info("old run records removed", "removed", removed, "run_history_days", days)
+	}
+	return removed
+}
+
+func readRecordOps(ctx context.Context, r repo.Repository, keys []string) []string {
+	ops := make([]string, len(keys))
+	idx := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idx {
+				var rec admin.Record
+				if admin.ReadJSON(ctx, r, keys[i], &rec) == nil {
+					ops[i] = rec.Op
+				}
+			}
+		}()
+	}
+	for i := range keys {
+		idx <- i
+	}
+	close(idx)
+	wg.Wait()
+	return ops
 }
 
 func (e *Engine) deleteSnapshot(ctx context.Context, r repo.Repository, prefix string, job *config.Job, m *manifest.Manifest, keys []string) error {

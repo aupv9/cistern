@@ -133,9 +133,13 @@ func (s *Server) newSession(actor admin.Actor, roles []string) *session {
 }
 
 func (s *Server) logout(w http.ResponseWriter, rq *request) {
-	s.revoked.add(rq.sess.ID, rq.sess.expiresAt())
+	e := &AuditEntry{Action: ActionLogout, Result: ResultSucceeded, Summary: displayName(rq.actor()) + " signed out"}
+	if err := s.revoked.revoke(rq.Context(), rq.sess); err != nil {
+		s.log.Error("storing the session revocation failed: the session is revoked on this server only", "err", err)
+		e.Error = "the revocation could not be stored; other server replicas accept the session until it expires"
+	}
 	s.cookies.set(w, s.cookies.session, "", -1, http.SameSiteStrictMode)
-	s.writeAudit(rq.Context(), rq, &AuditEntry{Action: ActionLogout, Result: ResultSucceeded, Summary: displayName(rq.actor()) + " signed out"})
+	s.writeAudit(rq.Context(), rq, e)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }

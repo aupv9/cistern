@@ -39,7 +39,7 @@ func tokenOK(r *http.Request, token string) bool {
 	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }
 
-func (d *daemonState) internalAPI(mux *http.ServeMux) {
+func (d *daemonState) internalAPI(mux *http.ServeMux, status http.HandlerFunc) {
 	auth := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if !tokenOK(r, d.opt.APIToken) {
@@ -50,6 +50,8 @@ func (d *daemonState) internalAPI(mux *http.ServeMux) {
 			h(w, r)
 		}
 	}
+	mux.HandleFunc("GET /status", auth(status))
+	mux.HandleFunc("GET /internal/v1/status", auth(status))
 	mux.HandleFunc("POST /internal/v1/runs", auth(d.startRun))
 	mux.HandleFunc("GET /internal/v1/runs", auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"runs": d.reg.list(r.URL.Query().Get("active") == "true")})

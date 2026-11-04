@@ -198,11 +198,12 @@ func newEnv(t *testing.T, mode string, ui fs.FS, edits ...func(string) string) *
 		if err != nil {
 			t.Fatal(err)
 		}
+		maddr := freeAddr(t)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			daemon.Run(ctx, daemon.Options{
-				Listen: daddr, Grace: 5 * time.Second, Log: log, Status: eng.Status, Location: time.UTC, APIToken: dcfg.Daemon.APIToken,
+				Listen: maddr, APIListen: daddr, Grace: 5 * time.Second, Log: log, Status: eng.Status, Location: time.UTC, APIToken: dcfg.Daemon.APIToken,
 				Prepare: func(req *daemon.RunRequest) error { return runner.Prepare(dcfg, req) },
 				Execute: func(ctx context.Context, req *daemon.RunRequest) (daemon.Result, error) {
 					return runner.Execute(ctx, eng, req)

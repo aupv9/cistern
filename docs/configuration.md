@@ -73,7 +73,7 @@ A map of repository name to repository. At least one is required.
 | `part_size_mb` | int | `16` | `s3`: multipart part size and upload memory per artifact (minimum 5) |
 | `ca_file` | string | — | `s3`: extra PEM CA bundle (added to the system pool) |
 | `insecure_skip_verify` | bool | `false` | `s3`: skip TLS verification (test environments only) |
-| `object_lock` | map | — | `s3`: `{ mode: GOVERNANCE \| COMPLIANCE, days: N }` — lock every artifact and manifest for `N` days. The bucket must have Object Lock enabled |
+| `object_lock` | map | — | `s3`: `{ mode: GOVERNANCE \| COMPLIANCE, days: N }` — lock every artifact, manifest and run record for `N` days (audit entries and approvals use `server.audit_retention_days`). The bucket must have Object Lock enabled |
 
 See [Repositories](repositories.md).
 
@@ -86,7 +86,8 @@ See [Repositories](repositories.md).
 | `identity_file` | string | — | age private key file; needed to verify fully, restore, and read the previous snapshot for incremental S3 backups |
 | `allow_plaintext` | bool | `false` | Allow a configuration without recipients (artifacts stored unencrypted) |
 
-Loading fails when no recipient is configured and `allow_plaintext` is not `true`.
+Loading fails when no recipient is configured and `allow_plaintext` is not `true`. `cistern server`
+ignores this section: it never encrypts or decrypts, so unset variables here do not matter to it.
 
 ## `compression`
 
@@ -98,7 +99,7 @@ Loading fails when no recipient is configured and `allow_plaintext` is not `true
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `listen` | string | `:9464` | Address of the daemon's HTTP server (`/metrics`, `/healthz`, `/status`) |
+| `listen` | string | `:9464` | Address of the daemon's metrics listener (`/metrics`, `/healthz`, `/status`); never serves the internal API |
 | `pushgateway_url` | string | — | One-shot commands push metrics here after each operation |
 | `textfile_dir` | string | — | One-shot commands write `cistern_<job>.prom` here for node_exporter |
 
@@ -137,6 +138,7 @@ Values every job inherits unless it sets its own.
 | `timeout` | duration | `6h` | Maximum duration of one backup, verify or restore |
 | `retention` | map | — | Retention policy (see below) |
 | `prune_after_backup` | bool | `false` | Prune right after each successful backup |
+| `run_history_days` | int | `400` | Prune deletes [run records](admin-ui.md#run-records) older than this many days, but always keeps the newest 30 per operation; `0` keeps them forever |
 
 ## `jobs`
 
@@ -150,6 +152,7 @@ Values every job inherits unless it sets its own.
 | `timeout` | duration | `defaults.timeout` | |
 | `retention` | map | `defaults.retention` | |
 | `prune_after_backup` | bool | `defaults.prune_after_backup` | |
+| `run_history_days` | int | `defaults.run_history_days` | |
 | `hooks` | map | — | `pre_backup`, `post_backup`, `pre_restore`, `post_restore`. **Accepted but not executed yet** |
 | `params` | map | `{}` | Driver parameters. A list value is joined with commas (`databases: [a, b]` → `a,b`) |
 | `restore_targets` | list | one implicit target `original` | Where the [Admin UI](admin-ui.md#restore-targets) may restore to (see below) |
@@ -198,7 +201,9 @@ Macros: `@yearly` (`@annually`), `@monthly`, `@weekly`, `@daily` (`@midnight`), 
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `api_token` | string | — | Enables the internal API (`/internal/v1/runs`) used by `cistern server`; at least 32 characters. Without it the API is off |
+| `api_token` | string | — | Enables the internal API (`/internal/v1/runs`) used by `cistern server`; at least 32 characters. Without it the API is off and nothing listens on `api_listen` |
+| `api_listen` | string | `:9465` when `api_token` is set | Address of the internal API listener (`/internal/v1/*`, `/status` with the token, `/healthz`). Must differ from `metrics.listen`; the metrics listener answers `404` for `/internal/*` |
+| `api_tls.cert_file`, `api_tls.key_file` | string | — | Serve the internal API over HTTPS (TLS 1.2+) with this certificate and key; the server then uses an `https://` `daemon.url` |
 
 ## `server`
 
@@ -210,12 +215,13 @@ Configuration of `cistern server`, the [Admin UI](admin-ui.md). Ignored by every
 | `listen` | string | `127.0.0.1:8443` | Address to listen on (`--listen` overrides it) |
 | `public_url` | string | — | `https://host[:port]` users open, without a path; required except in dev mode. The OIDC redirect URI is `<public_url>/api/v1/auth/callback` |
 | `tls.cert_file`, `tls.key_file` | string | — | Serve HTTPS with this certificate and key (TLS 1.2+) |
-| `tls.upstream` | bool | `false` | Declare that a proxy terminates TLS; the server speaks HTTP and trusts the right-most `X-Forwarded-For` entry |
+| `tls.upstream` | bool | `false` | Declare that a proxy terminates TLS; the server speaks HTTP. `X-Forwarded-For` is only used with `trusted_proxies` |
+| `trusted_proxies` | list | `[]` | CIDRs or addresses of reverse proxies. When the connection comes from one of them, the client address is the right-most `X-Forwarded-For` entry that is not itself a trusted proxy; otherwise it is the connection's address. Used for the sign-in rate limit and the audit log |
 | `session_key` | string | — | Encrypts the session and sign-in cookies; at least 32 bytes, from an environment variable. Required except in dev mode |
 | `session_ttl` | duration | `8h` | Absolute session lifetime, between `1m` and `8h` |
 | `idle_timeout` | duration | `30m` | Sign out after this much inactivity, at most `session_ttl` |
 | `state_repository` | string | `defaults.repository` | Repository for the audit log and approvals |
-| `audit_retention_days` | int | `400` | Object Lock retain-until for audit entries on S3 repositories with `object_lock`; at least 365 |
+| `audit_retention_days` | int | `400` | Object Lock retain-until for audit entries and approval objects on S3 repositories with `object_lock`; at least 365 |
 | `oidc.issuer` | string | — | Issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration` |
 | `oidc.client_id` | string | — | Client ID |
 | `oidc.client_secret` | string | — | Client secret; empty for a public client |
@@ -224,11 +230,19 @@ Configuration of `cistern server`, the [Admin UI](admin-ui.md). Ignored by every
 | `oidc.email_claim` | string | `email` | ID token claim with the email |
 | `oidc.name_claim` | string | `name` | ID token claim with the display name |
 | `roles` | list | — | `{ group, roles }` entries; `roles` from `viewer`, `operator`, `restorer`, `approver`, `admin`. At least one is required except in dev mode |
-| `daemon.url` | string | — | Base URL of `cistern daemon`, for example `http://cistern:9464`. Without it the UI is read-only |
+| `daemon.url` | string | — | Base URL of the daemon's internal API (`daemon.api_listen`), for example `http://cistern:9465` or `https://cistern:9465`. Without it the UI is read-only |
 | `daemon.token` | string | — | Same value as the daemon's `daemon.api_token`; required with `daemon.url` |
+| `daemon.ca_file` | string | — | PEM CA bundle that verifies the daemon's `api_tls` certificate (instead of the system pool); only with an `https://` `daemon.url` |
+| `rate_limit.login_per_minute` | int | `10` | Requests per minute to `/api/v1/auth/login`, `/auth/callback` and `/auth/dev-login` per client address; one sign-in uses two (login and callback) |
+| `rate_limit.write_per_minute` | int | `30` | Non-GET API requests per minute per user |
+| `rate_limit.read_per_minute` | int | `600` | GET API requests per minute per user |
 
 Exactly one of `tls.cert_file`/`tls.key_file` and `tls.upstream: true` is required unless the server
 runs with `--insecure-dev-login`, which in turn needs a loopback `listen` and no `tls`.
+
+Rate limits are token buckets: a client may send up to the per-minute value at once, and the budget
+refills evenly over a minute. `0` disables a limit. A request over the limit gets `429` with code
+`rate_limited` and a `Retry-After` header in seconds. Buckets live in memory, per server process.
 
 ## Environment variables
 

@@ -50,14 +50,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [postgres, s3, mysql, mariadb, s3-driver, server]
+        target: [postgres, s3, mysql, mariadb, s3-driver, server, oidc, ui]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: "1.24"
           cache-dependency-path: go.mod
+      - uses: actions/setup-node@v7
+        if: matrix.target == 'ui'
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: matrix.target == 'ui'
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - run: ./scripts/e2e-local.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        if: failure() && matrix.target == 'ui'
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 14
 
   image:
     name: image and kubernetes
@@ -118,3 +137,40 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ steps.version.outputs.version }}
+
+  release:
+    name: github release
+    needs: [test, web, e2e, image, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.24"
+          cache-dependency-path: go.mod
+      - run: make ui
+      - run: make dist VERSION="${GITHUB_REF_NAME}"
+      - run: make release-notes VERSION="${GITHUB_REF_NAME}"
+      - name: Check the binaries
+        run: |
+          tar -xzOf "dist/cistern_${GITHUB_REF_NAME}_linux_amd64.tar.gz" "cistern_${GITHUB_REF_NAME}_linux_amd64/cistern" > /tmp/cistern
+          chmod +x /tmp/cistern
+          /tmp/cistern version | tee /dev/stderr | grep -F "${GITHUB_REF_NAME}"
+          (cd dist && sha256sum -c SHA256SUMS)
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --verify-tag --title "Cistern ${GITHUB_REF_NAME}" \
+            --notes-file dist/release-notes.md dist/*.tar.gz dist/SHA256SUMS

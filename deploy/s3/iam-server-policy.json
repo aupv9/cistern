@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListRepository",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketObjectLockConfiguration"],
+      "Resource": "arn:aws:s3:::BUCKET",
+      "Condition": { "StringLike": { "s3:prefix": ["PREFIX/*", "PREFIX/", ""] } }
+    },
+    {
+      "Sid": "ReadRepository",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/*"
+    },
+    {
+      "Sid": "WriteAuditApprovalsAndSessions",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:PutObjectRetention"],
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/_admin/*"
+    },
+    {
+      "Sid": "DeleteExpiredRevocationsOnly",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": "arn:aws:s3:::BUCKET/PREFIX/_admin/sessions/revoked/*"
+    }
+  ]
+}

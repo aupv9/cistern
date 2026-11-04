@@ -143,7 +143,11 @@ func WriteRecord(ctx context.Context, r repo.Repository, prefix string, rec *Rec
 	if err != nil {
 		return err
 	}
-	return r.PutIfAbsent(ctx, RunKey(prefix, rec.Job, rec.ID), append(data, '\n'))
+	key := RunKey(prefix, rec.Job, rec.ID)
+	if rt, ok := r.(repo.Retainer); ok && rt.LockMode() != "" && rt.LockDays() > 0 {
+		return rt.PutIfAbsentUntil(ctx, key, append(data, '\n'), time.Now().Add(time.Duration(rt.LockDays())*24*time.Hour))
+	}
+	return r.PutIfAbsent(ctx, key, append(data, '\n'))
 }
 
 func RecordKeys(ctx context.Context, r repo.Repository, prefix, job string) ([]string, error) {

@@ -37,6 +37,6 @@ ENV PATH=/usr/pgsql-${PG_MAJOR}/bin:$PATH \
     HOME=/tmp
 COPY --from=build /out/cistern /usr/local/bin/cistern
 USER 10001:10001
-EXPOSE 9464 8443
+EXPOSE 9464 9465 8443
 ENTRYPOINT ["/usr/local/bin/cistern"]
 CMD ["daemon"]

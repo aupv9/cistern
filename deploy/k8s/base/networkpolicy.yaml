@@ -11,3 +11,10 @@ spec:
     - ports:
         - port: 9464
           protocol: TCP
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/name, operator: In, values: [cistern-server] }
+      ports:
+        - port: 9465
+          protocol: TCP

@@ -128,10 +128,13 @@ func (r *S3) Check(ctx context.Context) error {
 
 type Retainer interface {
 	LockMode() string
+	LockDays() int
 	PutIfAbsentUntil(ctx context.Context, key string, data []byte, until time.Time) error
 }
 
 func (r *S3) LockMode() string { return r.lockMode }
+
+func (r *S3) LockDays() int { return r.lockDays }
 
 func (r *S3) PutIfAbsentUntil(ctx context.Context, key string, data []byte, until time.Time) error {
 	if err := ValidKey(key); err != nil {

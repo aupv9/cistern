@@ -6,6 +6,46 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Rate limits for the Admin UI API (`server.rate_limit`): sign-in 10 per minute per client address,
+  writes 30 and reads 600 per minute per user; `429` with code `rate_limited` and `Retry-After`.
+- `server.trusted_proxies`: `X-Forwarded-For` is used only for connections from these networks.
+- Run record retention: `run_history_days` (default 400, `0` keeps them forever) applied by
+  `cistern prune`, which always keeps the newest 30 per operation and reports `run_records_removed`.
+- Optional TLS for the daemon internal API (`daemon.api_tls`, verified with `server.daemon.ca_file`).
+- `deploy/s3/iam-server-policy.json`: least-privilege credentials for `cistern server`.
+- OIDC end-to-end test against a real Keycloak (`scripts/e2e/oidc.sh`, CI target `oidc`):
+  authorization code flow with PKCE, roles from the groups claim, `no_role` denial, two-person
+  approval, sign-out revocation across a server restart, sign-in rate limit, audit subjects.
+- Playwright tests against a real backend (`npm run test:e2e:real`, CI target `ui`); the report is
+  uploaded when they fail.
+- The Kubernetes test also deploys `deploy/k8s/server` and checks pod hardening, security headers and
+  that the daemon API is reachable only from server pods.
+- GitHub Releases for `v*` tags with `linux` and `darwin` archives for `amd64` and `arm64` (UI
+  embedded) and `SHA256SUMS`; `make dist`, `make release-notes`.
+
+### Changed
+
+- The daemon internal API has its own listener, `daemon.api_listen` (default `:9465`); `/internal/*`
+  returns 404 on the metrics port. Set `server.daemon.url` to `http://<daemon>:9465`.
+- `tls.upstream` no longer implies trusting `X-Forwarded-For`; list proxies in
+  `server.trusted_proxies`.
+- `cistern server` ignores the `encryption` section and no longer needs `CISTERN_RECIPIENT`; the job
+  page shows the encryption of the newest snapshot.
+- The Kubernetes base exposes port 9465 (`api`) and its NetworkPolicy admits it only from
+  `cistern-server` pods; the image exposes 9465.
+- `iam-prune-policy.json` lets prune write its run records.
+- `scripts/e2e-local.sh server` and `ui` run their backend on ports 18480–18482 in a temporary
+  directory and no longer touch `.dev-ui/`.
+
+### Security
+
+- Sign-out revokes the session in the state repository (`_admin/sessions/revoked/`), so it holds
+  across server restarts and, within 30 seconds, across replicas.
+- On S3 repositories with `object_lock`, approvals are locked for `server.audit_retention_days` and
+  run records for `object_lock.days`.
+
 ## [0.3] - 2026-11-03
 
 Adds the Admin UI: a web interface and REST API to watch jobs, run backups and verifies, and restore

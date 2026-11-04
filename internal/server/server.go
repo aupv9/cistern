@@ -41,7 +41,8 @@ type Server struct {
 	sessions *sealer
 	logins   *sealer
 	cookies  cookieNames
-	revoked  revocations
+	revoked  *revocations
+	limits   limiters
 	oidc     *oidc.Provider
 
 	data      *store
@@ -74,6 +75,11 @@ func New(opt Options) (*Server, error) {
 		opt.AuditOut = os.Stdout
 	}
 	s := &Server{cfg: cfg, scfg: sc, version: opt.Version, dev: opt.DevLogin, log: log, now: time.Now, cookies: newCookieNames(opt.DevLogin)}
+	s.limits = limiters{
+		login: newLimiter(sc.RateLimit.Login(), 0),
+		write: newLimiter(sc.RateLimit.Write(), 0),
+		read:  newLimiter(sc.RateLimit.Read(), 0),
+	}
 
 	key := []byte(sc.SessionKey)
 	if len(key) == 0 {
@@ -107,11 +113,22 @@ func New(opt Options) (*Server, error) {
 		return nil, fmt.Errorf("server.state_repository: %w", err)
 	}
 	s.audit = newAuditStore(stateRepo, statePrefix, sc.AuditRetentionDays, opt.AuditOut)
-	s.approvals = newApprovalStore(stateRepo, statePrefix)
+	s.approvals = newApprovalStore(stateRepo, statePrefix, sc.AuditRetentionDays)
+	s.revoked = newRevocations(stateRepo, statePrefix, log, func() time.Time { return s.now() })
+	lctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err = s.revoked.load(lctx)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("loading session revocations from server.state_repository: %w", err)
+	}
 
 	s.daemon = &daemonCache{now: time.Now}
 	if sc.Daemon.URL != "" {
-		if s.client, err = daemon.NewClient(sc.Daemon.URL, sc.Daemon.Token, nil); err != nil {
+		hc, err := daemon.HTTPClient(cfg.Resolve(sc.Daemon.CAFile))
+		if err != nil {
+			return nil, fmt.Errorf("server.daemon.ca_file: %w", err)
+		}
+		if s.client, err = daemon.NewClient(sc.Daemon.URL, sc.Daemon.Token, hc); err != nil {
 			return nil, err
 		}
 		s.daemon.client = s.client
@@ -192,19 +209,21 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	var wg sync.WaitGroup
 	tctx, stopTracker := context.WithCancel(ctx)
-	wg.Add(1)
+	wg.Add(2)
 	go func() { defer wg.Done(); s.tracker.loop(tctx) }()
+	go func() { defer wg.Done(); s.revoked.loop(tctx) }()
 
 	errc := make(chan error, 1)
+	useTLS := srv.TLSConfig != nil
 	go func() {
-		if srv.TLSConfig != nil {
+		if useTLS {
 			errc <- srv.ServeTLS(ln, "", "")
 		} else {
 			errc <- srv.Serve(ln)
 		}
 	}()
 	scheme := "http"
-	if srv.TLSConfig != nil {
+	if useTLS {
 		scheme = "https"
 	}
 	s.log.Info("admin server started", "listen", ln.Addr().String(), "scheme", scheme, "public_url", s.scfg.PublicURL,

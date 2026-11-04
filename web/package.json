@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
     "serve:mock": "node scripts/serve.mjs dist-mock/client 4173",
     "postinstall": "node scripts/go-ignore.mjs"
   },

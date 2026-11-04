@@ -115,7 +115,13 @@ type Defaults struct {
 	Timeout          time.Duration `yaml:"timeout"`
 	Retention        *Retention    `yaml:"retention"`
 	PruneAfterBackup bool          `yaml:"prune_after_backup"`
+	RunHistoryDays   *int          `yaml:"run_history_days"`
 }
+
+const (
+	DefaultRunHistoryDays = 400
+	MinRunHistoryKeep     = 30
+)
 
 type Hooks struct {
 	PreBackup   string `yaml:"pre_backup"`
@@ -133,6 +139,7 @@ type Job struct {
 	Timeout          time.Duration     `yaml:"timeout"`
 	Retention        *Retention        `yaml:"retention"`
 	PruneAfterBackup *bool             `yaml:"prune_after_backup"`
+	RunHistoryDays   *int              `yaml:"run_history_days"`
 	Hooks            Hooks             `yaml:"hooks"`
 	Params           map[string]string `yaml:"params"`
 	RestoreTargets   []*RestoreTarget  `yaml:"restore_targets"`
@@ -228,7 +235,7 @@ func (p Process) lenient(path string) bool {
 	case ProcessDaemon:
 		prefixes = []string{"server"}
 	case ProcessServer:
-		prefixes = []string{"jobs.params", "jobs.restore_targets.set", "daemon", "notify"}
+		prefixes = []string{"jobs.params", "jobs.restore_targets.set", "daemon", "notify", "encryption"}
 	}
 	for _, pre := range prefixes {
 		if path == pre || strings.HasPrefix(path, pre+".") {
@@ -250,6 +257,9 @@ func LoadFor(path string, p Process) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	cfg.Path = path
+	if p == ProcessServer {
+		return cfg, nil
+	}
 	if err := cfg.loadRecipients(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -373,15 +383,19 @@ func (c *Config) normalize() error {
 			}
 		}
 	}
-	if c.Daemon.APIToken != "" && len(c.Daemon.APIToken) < 32 {
-		add("daemon.api_token: must be at least 32 characters")
-	}
+	errs = append(errs, c.Daemon.normalize(c)...)
 	if err := c.Defaults.Retention.validate(); err != nil {
 		add("defaults.retention: %v", err)
 	}
 
 	if c.Defaults.Timeout == 0 {
 		c.Defaults.Timeout = 6 * time.Hour
+	}
+	if c.Defaults.RunHistoryDays == nil {
+		d := DefaultRunHistoryDays
+		c.Defaults.RunHistoryDays = &d
+	} else if *c.Defaults.RunHistoryDays < 0 {
+		add("defaults.run_history_days: must not be negative (0 keeps run records forever)")
 	}
 	if c.Defaults.Repository == "" && len(c.Repositories) == 1 {
 		c.Defaults.Repository = names[0]
@@ -436,6 +450,12 @@ func (c *Config) normalize() error {
 		if j.PruneAfterBackup == nil {
 			v := c.Defaults.PruneAfterBackup
 			j.PruneAfterBackup = &v
+		}
+		if j.RunHistoryDays == nil {
+			v := *c.Defaults.RunHistoryDays
+			j.RunHistoryDays = &v
+		} else if *j.RunHistoryDays < 0 {
+			add("%s.run_history_days: must not be negative (0 keeps run records forever)", p)
 		}
 		if j.Params == nil {
 			j.Params = map[string]string{}

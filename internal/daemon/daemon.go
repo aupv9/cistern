@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -22,10 +24,17 @@ type Options struct {
 	Location *time.Location
 	Log      *slog.Logger
 
-	Execute  Executor
-	APIToken string
-	Prepare  func(req *RunRequest) error
+	Execute     Executor
+	APIToken    string
+	APIListen   string
+	APICertFile string
+	APIKeyFile  string
+	Prepare     func(req *RunRequest) error
 }
+
+const DefaultAPIListen = ":9465"
+
+func (o *Options) apiEnabled() bool { return o.APIToken != "" && o.Execute != nil }
 
 type daemonState struct {
 	opt    Options
@@ -42,6 +51,15 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if opt.Log == nil {
 		opt.Log = slog.Default()
+	}
+	if opt.apiEnabled() && opt.APIListen == "" {
+		opt.APIListen = DefaultAPIListen
+	}
+	if opt.apiEnabled() && opt.APIListen == opt.Listen {
+		return fmt.Errorf("daemon.api_listen (%s) must differ from the metrics listener", opt.APIListen)
+	}
+	if (opt.APICertFile == "") != (opt.APIKeyFile == "") {
+		return errors.New("daemon.api_tls: cert_file and key_file must be set together")
 	}
 	jobCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
@@ -63,9 +81,7 @@ func Run(ctx context.Context, opt Options) error {
 		sched.Busy = d.reg.isBusy
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
+	status := func(w http.ResponseWriter, _ *http.Request) {
 		v := map[string]any{}
 		if opt.Status != nil {
 			v = opt.Status()
@@ -73,22 +89,56 @@ func Run(ctx context.Context, opt Options) error {
 		v["tasks"] = sched.Status()
 		v["running"] = d.reg.running()
 		v["timezone"] = sched.loc.String()
-		v["api"] = opt.APIToken != "" && opt.Execute != nil
+		v["api"] = opt.apiEnabled()
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		enc.Encode(v)
-	})
+	}
+	healthz := func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") }
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /status", status)
 	if opt.Metrics != nil {
 		mux.Handle("GET /metrics", opt.Metrics)
 	}
-	if opt.APIToken != "" && opt.Execute != nil {
-		d.internalAPI(mux)
+	ln, err := net.Listen("tcp", opt.Listen)
+	if err != nil {
+		return err
 	}
-	srv := &http.Server{Addr: opt.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	opt.Log.Info("daemon started", "listen", opt.Listen, "tasks", len(opt.Tasks), "internal_api", opt.APIToken != "" && opt.Execute != nil)
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	errc := make(chan error, 2)
+	go func() { errc <- srv.Serve(ln) }()
+
+	var apiSrv *http.Server
+	if opt.apiEnabled() {
+		apiMux := http.NewServeMux()
+		apiMux.HandleFunc("GET /healthz", healthz)
+		d.internalAPI(apiMux, status)
+		apiSrv = &http.Server{Handler: apiMux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
+		if opt.APICertFile != "" {
+			cert, err := tls.LoadX509KeyPair(opt.APICertFile, opt.APIKeyFile)
+			if err != nil {
+				srv.Close()
+				return fmt.Errorf("daemon.api_tls: %w", err)
+			}
+			apiSrv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+		}
+		aln, err := net.Listen("tcp", opt.APIListen)
+		if err != nil {
+			srv.Close()
+			return fmt.Errorf("daemon.api_listen: %w", err)
+		}
+		hs, useTLS := apiSrv, apiSrv.TLSConfig != nil
+		go func() {
+			if useTLS {
+				errc <- hs.ServeTLS(aln, "", "")
+			} else {
+				errc <- hs.Serve(aln)
+			}
+		}()
+	}
+	opt.Log.Info("daemon started", "listen", opt.Listen, "tasks", len(opt.Tasks), "internal_api", opt.apiEnabled(), "api_listen", apiListenLog(opt), "api_tls", opt.apiEnabled() && opt.APICertFile != "")
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	loopDone := make(chan struct{})
@@ -105,8 +155,13 @@ func Run(ctx context.Context, opt Options) error {
 	<-loopDone
 	d.reg.close()
 	sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := srv.Shutdown(sctx); err != nil && !errors.Is(err, http.ErrServerClosed) && runErr == nil {
-		runErr = err
+	for _, hs := range []*http.Server{srv, apiSrv} {
+		if hs == nil {
+			continue
+		}
+		if err := hs.Shutdown(sctx); err != nil && !errors.Is(err, http.ErrServerClosed) && runErr == nil {
+			runErr = err
+		}
 	}
 	cancel()
 	apiDone := make(chan struct{})
@@ -133,4 +188,11 @@ func Run(ctx context.Context, opt Options) error {
 		runErr = nil
 	}
 	return runErr
+}
+
+func apiListenLog(opt Options) string {
+	if !opt.apiEnabled() {
+		return ""
+	}
+	return opt.APIListen
 }

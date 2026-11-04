@@ -204,7 +204,7 @@ server:
   oidc: { issuer: "https://idp.example.com", client_id: cistern, client_secret: "${OIDC_SECRET}" }
   roles:
     - { group: dba, roles: [restorer, approver] }
-  daemon: { url: "http://cistern:9464", token: "${DAEMON_TOKEN}" }
+  daemon: { url: "http://cistern:9465", token: "${DAEMON_TOKEN}" }
 `
 
 func TestServerSectionAndTargets(t *testing.T) {

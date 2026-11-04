@@ -44,8 +44,10 @@ parts; raise `part_size_mb` for artifacts larger than about 156 GiB.
 
 ## Object Lock
 
-With `object_lock`, every artifact and manifest is written with a retention date `days` days in the
-future. Job lock files are never locked, so they can be released.
+With `object_lock`, every artifact, manifest and run record is written with a retention date `days`
+days in the future. Admin UI audit entries and approval objects get `server.audit_retention_days`
+instead. Job lock files and session revocations are never locked, so they can be released and
+cleaned up.
 
 | Mode | Who can delete a locked version before it expires |
 | --- | --- |
@@ -87,7 +89,8 @@ credentials. Replace `BUCKET` and `PREFIX` in the policies:
 | Credentials | Policy | Used by |
 | --- | --- | --- |
 | Backup | [iam-backup-policy.json](../deploy/s3/iam-backup-policy.json) | `backup`, `verify`, `restore`, `check` — can write and read, can only delete job lock files |
-| Prune | [iam-prune-policy.json](../deploy/s3/iam-prune-policy.json) | a separate `cistern prune` job |
+| Prune | [iam-prune-policy.json](../deploy/s3/iam-prune-policy.json) | a separate `cistern prune` job — can delete snapshots, writes only job locks and run records |
+| Server | [iam-server-policy.json](../deploy/s3/iam-server-policy.json) | `cistern server` — reads the repository, writes only under `_admin/`, deletes only expired session revocations |
 
 With backup-only credentials:
 

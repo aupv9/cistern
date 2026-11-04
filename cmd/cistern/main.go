@@ -108,7 +108,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			err = c.keygen(*out)
 		}
 	case "daemon":
-		listen := fs.String("listen", "", "HTTP address (default: metrics.listen, :9464)")
+		listen := fs.String("listen", "", "address for /metrics, /healthz and /status (default: metrics.listen, :9464); the internal API uses daemon.api_listen")
 		grace := fs.Duration("grace", 5*time.Minute, "how long to wait for running jobs on shutdown")
 		if err = fs.Parse(rest); err == nil {
 			err = c.daemon(*listen, *grace)
@@ -293,7 +293,7 @@ func (c *cli) prune(job string, all, dryRun, asJSON bool) error {
 			if dryRun {
 				verb = "would remove"
 			}
-			fmt.Fprintf(c.stdout, "%s: kept %d, %s %d, errors %d\n", rep.Job, rep.Kept, verb, rep.Removed, rep.Errors)
+			fmt.Fprintf(c.stdout, "%s: kept %d, %s %d, errors %d, run records %s %d\n", rep.Job, rep.Kept, verb, rep.Removed, rep.Errors, verb, rep.RunRecordsRemoved)
 		}
 	}
 	if failed > 0 {
@@ -340,19 +340,23 @@ func (c *cli) daemon(listen string, grace time.Duration) error {
 		e.Log.Warn("no job has schedule or verify_schedule: daemon only serves /metrics, /healthz and /status")
 	}
 	e.RefreshMetrics(c.ctx)
-	if e.Cfg.Daemon.APIToken != "" {
-		e.Log.Info("internal API enabled for the admin server", "path", "/internal/v1/runs")
+	dc := e.Cfg.Daemon
+	if dc.APIToken != "" {
+		e.Log.Info("internal API enabled for the admin server", "listen", dc.APIListen, "path", "/internal/v1/runs", "tls", dc.APITLS.CertFile != "")
 	}
 	return daemon.Run(c.ctx, daemon.Options{
-		Listen:   listen,
-		Grace:    grace,
-		Metrics:  e.Metrics.Handler(),
-		Status:   e.Status,
-		Tasks:    tasks,
-		Location: e.Cfg.Location(),
-		Log:      e.Log,
-		APIToken: e.Cfg.Daemon.APIToken,
-		Prepare:  func(req *daemon.RunRequest) error { return runner.Prepare(e.Cfg, req) },
+		Listen:      listen,
+		Grace:       grace,
+		Metrics:     e.Metrics.Handler(),
+		Status:      e.Status,
+		Tasks:       tasks,
+		Location:    e.Cfg.Location(),
+		Log:         e.Log,
+		APIToken:    dc.APIToken,
+		APIListen:   dc.APIListen,
+		APICertFile: e.Cfg.Resolve(dc.APITLS.CertFile),
+		APIKeyFile:  e.Cfg.Resolve(dc.APITLS.KeyFile),
+		Prepare:     func(req *daemon.RunRequest) error { return runner.Prepare(e.Cfg, req) },
 		Execute: func(ctx context.Context, req *daemon.RunRequest) (daemon.Result, error) {
 			return runner.Execute(ctx, e, req)
 		},

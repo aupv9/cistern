@@ -7,3 +7,6 @@ spec:
     - name: metrics
       port: 9464
       targetPort: metrics
+    - name: api
+      port: 9465
+      targetPort: api
