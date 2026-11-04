@@ -33,9 +33,10 @@ k() { kubectl -n "$NS" "$@"; }
 pgsql() { k exec deploy/postgres -- psql -At -U postgres "$@"; }
 rand() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 probe() {
-  local name=$1 labels=$2 url=$3
+  local name=$1 labels=$2 url=$3 tries=${4:-1}
+  local script='i=0; while :; do code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 8 "$1" 2>/dev/null); rc=$?; i=$((i+1)); if [ "$code" != 000 ] || [ "$i" -ge "$2" ]; then break; fi; sleep 2; done; echo "$code exit=$rc"'
   k run "$name" --image="$CURL_IMAGE" --restart=Never ${labels:+--labels="$labels"} --command -- \
-    sh -c "curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 8 '$url' 2>/dev/null; echo \" exit=\$?\"" >/dev/null
+    sh -c "$script" probe "$url" "$tries" >/dev/null
   k wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$name" --timeout=180s >/dev/null || fail "probe pod $name did not finish"
   PROBE=$(k logs "$name")
   k delete pod "$name" --wait=false >/dev/null
@@ -115,13 +116,13 @@ kill "$PFS_PID" 2>/dev/null || true
 PFS_PID=
 
 step "network policy: daemon API 9465 only from the server, metrics 9464 from anywhere"
-probe np-server app.kubernetes.io/name=cistern-server http://cistern:9465/internal/v1/runs
+probe np-server app.kubernetes.io/name=cistern-server http://cistern:9465/internal/v1/runs 15
 [ "$PROBE" = "401 exit=0" ] || fail "daemon API from a cistern-server pod: '$PROBE', want 401"
 probe np-other "" http://cistern:9465/internal/v1/runs
 [[ "$PROBE" == "000 exit="* ]] && [ "$PROBE" != "000 exit=0" ] || fail "daemon API reachable from an unlabeled pod: '$PROBE'"
-probe np-metrics "" http://cistern:9464/metrics
+probe np-metrics "" http://cistern:9464/metrics 15
 [ "$PROBE" = "200 exit=0" ] || fail "metrics from an unlabeled pod: '$PROBE', want 200"
-probe np-internal "" http://cistern:9464/internal/v1/runs
+probe np-internal "" http://cistern:9464/internal/v1/runs 15
 [ "$PROBE" = "404 exit=0" ] || fail "/internal on the metrics port: '$PROBE', want 404"
 
 step "daemon runs scheduled backups and verifies"
