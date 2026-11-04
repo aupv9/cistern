@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS web
+FROM --platform=$BUILDPLATFORM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 COPY web/scripts ./scripts
@@ -8,7 +8,7 @@ COPY api /src/api
 COPY web ./
 RUN npm run build && test -f dist/client/_shell.html
 
-FROM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
@@ -16,7 +16,9 @@ COPY internal ./internal
 COPY web/ui.go web/ui_stub.go ./web/
 COPY --from=web /src/web/dist/client ./web/dist/client
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -tags timetzdata,ui -ldflags "-s -w -X main.version=${VERSION}" -o /out/cistern ./cmd/cistern
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags timetzdata,ui -ldflags "-s -w -X main.version=${VERSION}" -o /out/cistern ./cmd/cistern
 
 FROM oraclelinux:9-slim
 ARG PG_MAJOR=16
