@@ -1,0 +1,81 @@
+/*
+ * Stylesheet entry. The hand-written app CSS predates Tailwind, so:
+ * - Tailwind's preflight is left out; it would restyle every bare element in app.css.
+ * - app.css lives in the `legacy` layer, below `utilities`, so Tailwind classes on
+ *   shadcn components win over app.css element rules (button, :focus-visible, a).
+ * - Utilities are generated only from the files listed in @source, so an app.css
+ *   class such as `.hidden`, `.border` or `.table` never picks up Tailwind styles.
+ *   Add a file here when it starts using Tailwind classes.
+ */
+@layer theme, base, legacy, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@import 'tw-animate-css';
+@import './app.css' layer(legacy);
+
+@source '../components/ui';
+@source '../components/JobsTable.tsx';
+
+/* Follow the app's theme switch: data-theme wins, otherwise the OS preference. */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+}
+
+/* shadcn's semantic colors, mapped onto the existing tokens in tokens.css. */
+@theme inline {
+  --color-background: var(--surface);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--btn-bg);
+  --color-primary-foreground: var(--btn-fg);
+  --color-secondary: var(--fill);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--fill);
+  --color-muted-foreground: var(--fg2);
+  --color-accent: var(--fill);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--fail-fg);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--link);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+/* The slice of preflight shadcn components rely on, scoped to them via data-slot. */
+@layer base {
+  [data-slot],
+  [data-slot] *,
+  [data-slot]::before,
+  [data-slot]::after {
+    border: 0 solid var(--color-border);
+  }
+
+  button[data-slot] {
+    margin: 0;
+    padding: 0;
+    background-color: transparent;
+    cursor: pointer;
+  }
+
+  button[data-slot]:disabled {
+    cursor: not-allowed;
+  }
+
+  [data-slot] svg {
+    display: block;
+  }
+}
