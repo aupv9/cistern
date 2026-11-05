@@ -90,7 +90,7 @@ describe('overview with drills', () => {
     expect(within(jobs).getByRole('columnheader', { name: 'Last drill' })).toBeInTheDocument()
     expect(within(screen.getByTestId('job-row-users-db')).getByText('No drill')).toBeInTheDocument()
     expect(within(screen.getByTestId('job-row-orders-db')).getByText(/Passed,/)).toBeInTheDocument()
-    await user.click(within(jobs).getByRole('button', { name: /Drill failing/ }))
+    await user.click(within(jobs).getByRole('radio', { name: /^Drill failing/ }))
     expect(within(jobs).getByRole('link', { name: 'billing-db' })).toBeInTheDocument()
     expect(within(jobs).queryByRole('link', { name: 'orders-db' })).not.toBeInTheDocument()
   })

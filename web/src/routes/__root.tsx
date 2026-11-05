@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import { ClientOnly, HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
-import appCss from '~/styles/app.css?url'
+import appCss from '~/styles/main.css?url'
 import { THEME_BOOT_SCRIPT } from '~/lib/theme'
 
 const FAVICON =
